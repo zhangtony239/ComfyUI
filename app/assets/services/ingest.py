@@ -411,10 +411,19 @@ def _backfill_image_dimensions_from_siblings(
         meta = sibling.system_metadata or {}
         if meta.get("kind") != "image":
             continue
+        width = meta.get("width")
+        height = meta.get("height")
+        if (
+            not isinstance(width, int)
+            or not isinstance(height, int)
+            or width <= 0
+            or height <= 0
+        ):
+            continue
         merged = dict(current)
-        for key in _IMAGE_DIMENSION_KEYS:
-            if key in meta:
-                merged[key] = meta[key]
+        merged["kind"] = "image"
+        merged["width"] = width
+        merged["height"] = height
         if merged != current:
             set_reference_system_metadata(
                 session,
