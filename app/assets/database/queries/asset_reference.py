@@ -327,7 +327,12 @@ def list_references_page(
             select(AssetReferenceTag.asset_reference_id, Tag.name)
             .join(Tag, Tag.name == AssetReferenceTag.tag_name)
             .where(AssetReferenceTag.asset_reference_id.in_(id_list))
-            .order_by(AssetReferenceTag.tag_name.asc())
+            # Preserve insertion order so the structural first tag (the root
+            # category like "models") stays in position 0 and the path-derived
+            # sub-path tag stays in position 1, matching cloud's behavior.
+            # tag_name is a deterministic tiebreaker when multiple tags share
+            # an added_at (same-batch insert via set_reference_tags).
+            .order_by(AssetReferenceTag.added_at.asc(), AssetReferenceTag.tag_name.asc())
         )
         for ref_id, tag_name in rows.all():
             tag_map[ref_id].append(tag_name)
@@ -355,7 +360,8 @@ def fetch_reference_asset_and_tags(
             build_visible_owner_clause(owner_id),
         )
         .options(noload(AssetReference.tags))
-        .order_by(Tag.name.asc())
+        # See list_references_page for the rationale behind ordering by added_at.
+        .order_by(AssetReferenceTag.added_at.asc(), Tag.name.asc())
     )
 
     rows = session.execute(stmt).all()
