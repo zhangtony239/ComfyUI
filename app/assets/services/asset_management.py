@@ -18,6 +18,7 @@ from app.assets.database.queries import (
     list_references_page,
     list_all_file_paths_by_asset_id,
     list_references_by_asset_id,
+    count_model_references_by_folder,
     set_reference_metadata,
     set_reference_preview,
     set_reference_tags,
@@ -246,6 +247,8 @@ def list_assets_page(
     owner_id: str = "",
     include_tags: Sequence[str] | None = None,
     exclude_tags: Sequence[str] | None = None,
+    asset_type: str | None = None,
+    model_folder: str | None = None,
     name_contains: str | None = None,
     metadata_filter: dict | None = None,
     limit: int = 20,
@@ -259,6 +262,8 @@ def list_assets_page(
             owner_id=owner_id,
             include_tags=include_tags,
             exclude_tags=exclude_tags,
+            asset_type=asset_type,
+            model_folder=model_folder,
             name_contains=name_contains,
             metadata_filter=metadata_filter,
             limit=limit,
@@ -278,6 +283,11 @@ def list_assets_page(
             )
 
         return ListAssetsResult(items=items, total=total)
+
+
+def list_model_folder_counts(owner_id: str = "") -> dict[str, int]:
+    with create_session() as session:
+        return count_model_references_by_folder(session, owner_id=owner_id)
 
 
 def resolve_hash_to_path(

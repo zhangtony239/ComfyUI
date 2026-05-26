@@ -10,7 +10,6 @@ from typing import Any
 from aiohttp import web
 from pydantic import ValidationError
 
-import folder_paths
 from app import user_manager
 from app.assets.api import schemas_in, schemas_out
 from app.assets.services import schemas
@@ -33,11 +32,16 @@ from app.assets.services import (
     delete_asset_reference,
     get_asset_detail,
     list_assets_page,
+    list_model_folder_counts,
     list_tags,
     remove_tags,
     resolve_asset_for_download,
     update_asset_metadata,
     upload_from_temp_path,
+)
+from app.assets.services.path_utils import (
+    get_comfy_models_folders,
+    get_stored_asset_response_path_info,
 )
 from app.assets.services.tagging import list_tag_histogram
 
@@ -124,17 +128,36 @@ def _validate_sort_field(requested: str | None) -> str:
     return "created_at"
 
 
-def _build_preview_url_from_view(tags: list[str], user_metadata: dict[str, Any] | None) -> str | None:
-    """Build a /api/view preview URL from asset tags and user_metadata filename."""
+def _get_asset_path_info(
+    file_path: str | None,
+    asset_type: str | None,
+    model_folder: str | None,
+):
+    if not file_path or not asset_type:
+        return None
+    try:
+        return get_stored_asset_response_path_info(file_path, asset_type, model_folder)
+    except ValueError:
+        return None
+
+
+def _build_preview_url_from_view(
+    asset_type: str | None,
+    user_metadata: dict[str, Any] | None,
+    fallback_tags: list[str] | None = None,
+) -> str | None:
+    """Build a /api/view preview URL from path-derived type and filename metadata."""
     if not user_metadata:
         return None
     filename = user_metadata.get("filename")
     if not filename:
         return None
 
-    if "input" in tags:
+    if asset_type in {"input", "output"}:
+        view_type = asset_type
+    elif fallback_tags and "input" in fallback_tags:
         view_type = "input"
-    elif "output" in tags:
+    elif fallback_tags and "output" in fallback_tags:
         view_type = "output"
     else:
         return None
@@ -152,20 +175,54 @@ def _build_preview_url_from_view(tags: list[str], user_metadata: dict[str, Any] 
 
 def _build_asset_response(result: schemas.AssetDetailResult | schemas.UploadResult) -> schemas_out.Asset:
     """Build an Asset response from a service result."""
+    path_info = _get_asset_path_info(
+        result.ref.file_path,
+        result.ref.asset_type,
+        result.ref.model_folder,
+    )
+
     if result.ref.preview_id:
         preview_detail = get_asset_detail(result.ref.preview_id)
         if preview_detail:
-            preview_url = _build_preview_url_from_view(preview_detail.tags, preview_detail.ref.user_metadata)
+            preview_path_info = _get_asset_path_info(
+                preview_detail.ref.file_path,
+                preview_detail.ref.asset_type,
+                preview_detail.ref.model_folder,
+            )
+            preview_url = _build_preview_url_from_view(
+                preview_path_info.asset_type if preview_path_info else None,
+                preview_detail.ref.user_metadata,
+                fallback_tags=preview_detail.tags,
+            )
         else:
             preview_url = None
     else:
-        preview_url = _build_preview_url_from_view(result.tags, result.ref.user_metadata)
+        preview_url = _build_preview_url_from_view(
+            path_info.asset_type if path_info else None,
+            result.ref.user_metadata,
+            fallback_tags=result.tags,
+        )
+
+    asset_type = None
+    model_folder = None
+    file_path = None
+    display_name = None
+    if path_info:
+        asset_type = path_info.asset_type
+        model_folder = path_info.model_folder
+        file_path = path_info.file_path
+        display_name = path_info.display_name
+
     return schemas_out.Asset(
         id=result.ref.id,
         name=result.ref.name,
+        file_path=file_path,
+        display_name=display_name,
         asset_hash=result.asset.hash if result.asset else None,
         size=int(result.asset.size_bytes) if result.asset else None,
         mime_type=result.asset.mime_type if result.asset else None,
+        model_folder=model_folder,
+        asset_type=asset_type,
         tags=result.tags,
         preview_url=preview_url,
         preview_id=result.ref.preview_id,
@@ -177,6 +234,17 @@ def _build_asset_response(result: schemas.AssetDetailResult | schemas.UploadResu
         updated_at=result.ref.updated_at,
         last_access_time=result.ref.last_access_time,
     )
+
+
+def _build_model_folders_response_payload(
+    counts_by_folder: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    counts_by_folder = counts_by_folder or {}
+    model_folders = [
+        {"name": name, "folders": folders, "count": counts_by_folder.get(name, 0)}
+        for name, folders in get_comfy_models_folders()
+    ]
+    return {"model_folders": model_folders, "total": len(model_folders)}
 
 
 @ROUTES.head("/api/assets/hash/{hash}")
@@ -213,6 +281,8 @@ async def list_assets_route(request: web.Request) -> web.Response:
         owner_id=USER_MANAGER.get_request_user_id(request),
         include_tags=q.include_tags,
         exclude_tags=q.exclude_tags,
+        asset_type=q.asset_type,
+        model_folder=q.model_folder,
         name_contains=q.name_contains,
         metadata_filter=q.metadata_filter,
         limit=q.limit,
@@ -229,6 +299,14 @@ async def list_assets_route(request: web.Request) -> web.Response:
         has_more=(q.offset + len(summaries)) < result.total,
     )
     return web.json_response(payload.model_dump(mode="json", exclude_none=True))
+
+
+@ROUTES.get("/api/assets/model_folders")
+@_require_assets_feature_enabled
+async def list_model_folders_route(request: web.Request) -> web.Response:
+    """Debug endpoint for registered model folders known to the assets API."""
+    counts = list_model_folder_counts(owner_id=USER_MANAGER.get_request_user_id(request))
+    return web.json_response(_build_model_folders_response_payload(counts))
 
 
 @ROUTES.get(f"/api/assets/{{id:{UUID_RE}}}")
@@ -401,9 +479,10 @@ async def upload_asset(request: web.Request) -> web.Response:
         )
 
     if spec.tags and spec.tags[0] == "models":
+        model_folder_names = {name for name, _paths in get_comfy_models_folders()}
         if (
             len(spec.tags) < 2
-            or spec.tags[1] not in folder_paths.folder_names_and_paths
+            or spec.tags[1] not in model_folder_names
         ):
             delete_temp_file_if_exists(parsed.tmp_path)
             category = spec.tags[1] if len(spec.tags) >= 2 else ""
