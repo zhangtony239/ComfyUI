@@ -7527,6 +7527,39 @@ components:
           type: object
           description: Metadata about the execution and nodes
           additionalProperties: true
+        create_time:
+          type: integer
+          format: int64
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Unix-ms timestamp when the history entry was created."
+        extra_data:
+          type: object
+          additionalProperties: true
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Workflow-attached extra_data passed through with the prompt."
+        priority:
+          type: number
+          format: double
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Scheduling priority assigned to the history entry."
+        prompt_id:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] ID of the prompt this history entry belongs to."
+        workflow_id:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] ID of the workflow associated with the history entry."
 
     HistoryManageRequest:
       type: object
@@ -7649,6 +7682,12 @@ components:
         execution_meta:
           type: object
           additionalProperties: true
+        workflow_id:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] ID of the workflow associated with this job."
 
     ExecutionError:
       type: object
@@ -7828,6 +7867,24 @@ components:
     # -------------------------------------------------------------------
     # Node / Object Info
     # -------------------------------------------------------------------
+        cloud_version:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Version identifier of the cloud control plane."
+        comfyui_frontend_version:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Pinned ComfyUI frontend version served by the cloud."
+        workflow_templates_version:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Pinned workflow-templates version served by the cloud."
     NodeInfo:
       type: object
       description: 'Definition of a registered node class: its inputs, outputs, category, and display metadata.'
@@ -8229,6 +8286,12 @@ components:
         updated_at:
           type: string
           format: date-time
+        display_name:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Human-friendly display name for the updated asset."
 
     ListAssetsResponse:
       type: object
@@ -8246,6 +8309,12 @@ components:
           type: integer
         has_more:
           type: boolean
+        next_cursor:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Opaque cursor for fetching the next page of assets; absent when no more pages."
 
     TagInfo:
       type: object
@@ -8974,6 +9043,20 @@ components:
         created_at:
           type: string
           format: date-time
+        description:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Profile description / bio."
+        website_urls:
+          type: array
+          items:
+            type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] List of websites/social links associated with the profile."
 
     HubWorkflow:
       type: object
@@ -9565,6 +9648,25 @@ components:
         created_at:
           type: string
           format: date-time
+        event_id:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Unique identifier of the billing event."
+        event_type:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Type/category of the billing event."
+        params:
+          type: object
+          additionalProperties: true
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Event-specific parameters (free-form map)."
 
     BillingEventList:
       type: object
@@ -10070,6 +10172,36 @@ components:
           x-runtime:
             - cloud
           description: "[cloud-only] Whether the asset is present in the user's library (vs. a discovery/search result)."
+        name:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Display name of the asset."
+        model:
+          type: boolean
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Whether the asset is a model file (vs. a generic input/output)."
+        public:
+          type: boolean
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Whether the asset is publicly visible (vs. private to the user)."
+        preview_url:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] URL of a preview/thumbnail rendition for the asset."
+        storage_url:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] URL to fetch the asset's stored content."
 
     BulkRevokeAPIKeysResponse:
       type: object
@@ -10216,6 +10348,12 @@ components:
           format: date-time
         error:
           type: string
+        error_message:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Human-readable error message when the task fails."
 
     TasksListResponse:
       type: object
@@ -11761,3 +11899,22 @@ components:
         message:
           type: string
           description: User-provided feedback message
+        content:
+          type: string
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Free-form feedback text body."
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Submitter-supplied metadata attached to the feedback."
+        rating:
+          type: integer
+          nullable: true
+          x-runtime:
+            - cloud
+          description: "[cloud-only] Numeric rating (e.g. 1-5 stars) associated with the feedback."
