@@ -218,6 +218,11 @@ def test_filter_node_startup_errors_source_filter():
     assert set(grouped["comfy_extras"]) == {"B"}
     # Non-matching source filter returns an empty dict, not an error.
     assert nodes.filter_node_startup_errors(source="nope") == {}
+    # An explicit empty-string filter is treated as a real value (matches
+    # entries whose source is literally ""), NOT silently as "no filter".
+    # The HTTP route layer is responsible for coalescing `?source=` to None
+    # before calling this helper; this assertion locks that contract in.
+    assert nodes.filter_node_startup_errors(source="") == {}
 
 
 def test_filter_node_startup_errors_module_name_filter():

@@ -795,10 +795,13 @@ class PromptServer():
             result still returns ``{}`` with HTTP 200 rather than 404 — absence
             of an error is a valid answer for this endpoint.
             """
+            # Coalesce empty-string query values to None so `?source=` (param
+            # present but blank) is treated the same as the param being absent
+            # — rather than filtering for entries whose source is literally "".
             grouped = nodes.filter_node_startup_errors(
-                source=request.query.get("source"),
-                module_name=request.query.get("module_name"),
-                pack_id=request.query.get("pack_id"),
+                source=request.query.get("source") or None,
+                module_name=request.query.get("module_name") or None,
+                pack_id=request.query.get("pack_id") or None,
             )
             return web.json_response(grouped)
 
