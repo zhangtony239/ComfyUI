@@ -256,79 +256,78 @@ def test_blocker_sized_to_finalized_outputs_for_node_output():
 
 
 # ---------------------------------------------------------------------------
-# FromInput via DynamicCombo / DynamicSlot through the TypeResolver
+# DynamicOutputs.ByKey driven by a DynamicCombo selector (end-to-end resolver)
 # ---------------------------------------------------------------------------
 
-def _make_combo_fi_node():
-    """V3 node: DynamicCombo input drives output set via FromInput placeholder."""
+def _make_combo_bykey_node():
     from comfy_api.latest import _io as io
 
-    class ComboFI(io.ComfyNode):
+    class ComboBK(io.ComfyNode):
         @classmethod
         def define_schema(cls):
             return io.Schema(
-                node_id="ComboFI",
+                node_id="ComboBK",
                 inputs=[
                     io.DynamicCombo.Input("mode", options=[
-                        io.DynamicCombo.Option(
-                            key="image",
-                            inputs=[io.Image.Input("img")],
-                            outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")],
-                        ),
-                        io.DynamicCombo.Option(
-                            key="latent",
-                            inputs=[io.Latent.Input("lat")],
-                            outputs=[io.Latent.Output("denoised")],
-                        ),
+                        io.DynamicCombo.Option(key="image", inputs=[io.Image.Input("img")]),
+                        io.DynamicCombo.Option(key="latent", inputs=[io.Latent.Input("lat")]),
                     ]),
                 ],
-                outputs=[io.DynamicOutputs.FromInput("mode")],
+                outputs=[io.DynamicOutputs.ByKey(id="result", selector="mode", options=[
+                    io.DynamicOutputs.Option(key="image",
+                        outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")]),
+                    io.DynamicOutputs.Option(key="latent",
+                        outputs=[io.Latent.Output("denoised")]),
+                ])],
             )
 
         @classmethod
         def execute(cls, mode, **kwargs):
-            if mode == "latent":
+            if mode["mode"] == "latent":
                 return io.NodeOutput.from_named({"denoised": None})
             return io.NodeOutput.from_named({"processed": None, "alpha": None})
 
-    ComboFI.GET_SCHEMA()
-    return ComboFI
+    ComboBK.GET_SCHEMA()
+    return ComboBK
 
 
-def _make_slot_fi_node():
-    """V3 node: DynamicSlot input drives output set via FromInput placeholder."""
+def _make_slot_byslot_node():
     from comfy_api.latest import _io as io
 
-    class SlotFI(io.ComfyNode):
+    class SlotBS(io.ComfyNode):
         @classmethod
         def define_schema(cls):
             return io.Schema(
-                node_id="SlotFI",
+                node_id="SlotBS",
                 inputs=[
                     io.DynamicSlot.Input("slot", options=[
-                        io.DynamicSlot.Option(when=io.Image,
-                            outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")]),
-                        io.DynamicSlot.Option(when=io.Latent,
-                            outputs=[io.Latent.Output("denoised")]),
-                        io.DynamicSlot.Option(when=None, outputs=[]),
+                        io.DynamicSlot.Option(when=io.Image),
+                        io.DynamicSlot.Option(when=io.Latent),
+                        io.DynamicSlot.Option(when=None),
                     ]),
                 ],
-                outputs=[io.DynamicOutputs.FromInput("slot")],
+                outputs=[io.DynamicOutputs.BySlot(id="slot_out", selector="slot", options=[
+                    io.DynamicOutputs.SlotOption(when=io.Image,
+                        outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")]),
+                    io.DynamicOutputs.SlotOption(when=io.Latent,
+                        outputs=[io.Latent.Output("denoised")]),
+                    io.DynamicOutputs.SlotOption(when=None, outputs=[]),
+                ])],
             )
 
         @classmethod
         def execute(cls, **kwargs):
             return io.NodeOutput.from_named({})
 
-    SlotFI.GET_SCHEMA()
-    return SlotFI
+    SlotBS.GET_SCHEMA()
+    return SlotBS
 
 
-def test_combo_fromInput_resolver_picks_branch(fake_nodes_module, TypeResolver):
-    fake_nodes_module["ComboFI"] = _make_combo_fi_node()
+def test_combo_bykey_resolver_picks_branch(fake_nodes_module, TypeResolver):
+    fake_nodes_module["ComboBK"] = _make_combo_bykey_node()
     prompt = {
-        "img": {"class_type": "ComboFI", "inputs": {"mode": "image"}},
-        "lat": {"class_type": "ComboFI", "inputs": {"mode": "latent"}},
+        "img": {"class_type": "ComboBK", "inputs": {"mode": {"mode": "image", "img": None}}},
+        "lat": {"class_type": "ComboBK", "inputs": {"mode": {"mode": "latent", "lat": None}}},
     }
     r = TypeResolver(prompt)
     assert r.resolve_output_type("img", 0) == "IMAGE"
@@ -338,22 +337,22 @@ def test_combo_fromInput_resolver_picks_branch(fake_nodes_module, TypeResolver):
     assert r.finalized_output_count("lat") == 1
 
 
-def test_slot_fromInput_resolver_picks_by_resolved_type(fake_nodes_module, TypeResolver):
-    fake_nodes_module["SlotFI"] = _make_slot_fi_node()
+def test_slot_byslot_resolver_picks_by_resolved_type(fake_nodes_module, TypeResolver):
+    fake_nodes_module["SlotBS"] = _make_slot_byslot_node()
     fake_nodes_module["ImageSrc"] = _v1_node(("IMAGE",))
     fake_nodes_module["LatentSrc"] = _v1_node(("LATENT",))
     prompt = {
         "img_src": {"class_type": "ImageSrc", "inputs": {}},
         "lat_src": {"class_type": "LatentSrc", "inputs": {}},
-        "image_consumer": {"class_type": "SlotFI", "inputs": {"slot": ["img_src", 0]}},
-        "latent_consumer": {"class_type": "SlotFI", "inputs": {"slot": ["lat_src", 0]}},
-        "unconnected": {"class_type": "SlotFI", "inputs": {}},
+        "image_consumer": {"class_type": "SlotBS", "inputs": {"slot": ["img_src", 0]}},
+        "latent_consumer": {"class_type": "SlotBS", "inputs": {"slot": ["lat_src", 0]}},
+        "unconnected": {"class_type": "SlotBS", "inputs": {}},
     }
     r = TypeResolver(prompt)
     assert r.resolve_output_type("image_consumer", 0) == "IMAGE"
     assert r.resolve_output_type("image_consumer", 1) == "MASK"
     assert r.resolve_output_type("latent_consumer", 0) == "LATENT"
-    # Unconnected: when=None option declares outputs=[] → finalized count is 0.
+    # Unconnected → when=None branch declares outputs=[]
     assert r.finalized_output_count("unconnected") == 0
 
 

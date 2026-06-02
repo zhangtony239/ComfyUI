@@ -235,9 +235,8 @@ class TypeResolver:
     def _get_finalized_outputs(self, node_id: str, node: dict | None, class_def) -> io.FinalizedOutputs | None:
         """Return ``FinalizedOutputs`` for V3 nodes with DynamicOutputs groups, else ``None``.
 
-        ``FromInput`` placeholders for ``DynamicSlot`` inputs also need
-        ``live_input_types`` (computed lazily from the resolver itself) so
-        the active option can be picked by resolved upstream type.
+        ``BySlot`` groups need ``live_input_types`` (computed lazily from the
+        resolver itself) so the active option can be picked by resolved type.
         """
         if not (isinstance(class_def, type) and issubclass(class_def, _ComfyNodeInternal)):
             return None
@@ -246,25 +245,18 @@ class TypeResolver:
         except Exception:
             return None
         has_dynamic = any(
-            isinstance(o, (io.DynamicOutputs.ByKey, io.DynamicOutputs.FromInput))
+            isinstance(o, (io.DynamicOutputs.ByKey, io.DynamicOutputs.BySlot))
             for o in schema.outputs
         )
         if not has_dynamic:
             return None
         prompt_inputs = (node or {}).get("inputs", {}) or {}
-        # live_input_types is only needed for FromInput → DynamicSlot; skip the
-        # resolver pass otherwise to keep the hot path cheap.
-        needs_live_types = any(
-            isinstance(o, io.DynamicOutputs.FromInput)
-            and any(isinstance(i, io.DynamicSlot.Input) and i.id == o.input_id for i in schema.inputs)
-            for o in schema.outputs
-        )
+        # live_input_types is only needed for BySlot — skip the resolver pass
+        # otherwise to keep the hot path cheap.
+        needs_live_types = any(isinstance(o, io.DynamicOutputs.BySlot) for o in schema.outputs)
         live_input_types = self.compute_live_input_types(node_id) if needs_live_types else None
         return io.get_finalized_class_outputs(
-            schema.outputs,
-            prompt_inputs,
-            schema_inputs=schema.inputs,
-            live_input_types=live_input_types,
+            schema.outputs, prompt_inputs, live_input_types=live_input_types,
         )
 
     def finalized_output_count(self, node_id: str) -> int:

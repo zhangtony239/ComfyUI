@@ -235,198 +235,197 @@ def test_schema_rejects_duplicate_dynamic_group_ids():
 
 
 # ---------------------------------------------------------------------------
-# DynamicOutputs.FromInput — DynamicCombo / DynamicSlot integration
+# DynamicOutputs.ByKey with a DynamicCombo selector
 # ---------------------------------------------------------------------------
 
-def _combo_options_with_outputs():
-    return [
-        io.DynamicCombo.Option(
-            key="image",
-            inputs=[io.Image.Input("img")],
-            outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")],
-        ),
-        io.DynamicCombo.Option(
-            key="latent",
-            inputs=[io.Latent.Input("lat")],
-            outputs=[io.Latent.Output("denoised")],
-        ),
-    ]
+def _combo_input():
+    return io.DynamicCombo.Input("mode", options=[
+        io.DynamicCombo.Option(key="image", inputs=[io.Image.Input("img")]),
+        io.DynamicCombo.Option(key="latent", inputs=[io.Latent.Input("lat")]),
+    ])
 
 
-def _slot_options_with_outputs():
-    return [
-        io.DynamicSlot.Option(
-            when=io.Image,
-            outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")],
-        ),
-        io.DynamicSlot.Option(
-            when=io.Latent,
-            outputs=[io.Latent.Output("denoised")],
-        ),
-        io.DynamicSlot.Option(
-            when=None,
-            inputs=[io.Int.Input("seed")],
-            outputs=[],
-        ),
-    ]
+def _bykey_outputs():
+    return io.DynamicOutputs.ByKey(id="result", selector="mode", options=[
+        io.DynamicOutputs.Option(key="image", outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")]),
+        io.DynamicOutputs.Option(key="latent", outputs=[io.Latent.Output("denoised")]),
+    ])
 
 
-def test_fromInput_finalizes_combo_branch():
-    schema_inputs = [io.DynamicCombo.Input("mode", options=_combo_options_with_outputs())]
-    schema_outputs = [io.String.Output("status"), io.DynamicOutputs.FromInput("mode")]
+def test_bykey_with_dynamic_combo_finalizes_branch():
     finalized = io.get_finalized_class_outputs(
-        schema_outputs, {"mode": "image"}, schema_inputs=schema_inputs,
+        [io.String.Output("status"), _bykey_outputs()],
+        {"mode": {"mode": "image", "img": None}},  # DynamicCombo dispatch shape
     )
     assert finalized.output_ids == ["status", "processed", "alpha"]
     assert finalized.return_types == ["STRING", "IMAGE", "MASK"]
 
 
-def test_fromInput_unknown_combo_key_yields_only_static():
-    schema_inputs = [io.DynamicCombo.Input("mode", options=_combo_options_with_outputs())]
-    schema_outputs = [io.String.Output("status"), io.DynamicOutputs.FromInput("mode")]
+def test_bykey_with_dynamic_combo_other_branch():
     finalized = io.get_finalized_class_outputs(
-        schema_outputs, {"mode": "missing"}, schema_inputs=schema_inputs,
+        [_bykey_outputs()],
+        {"mode": {"mode": "latent", "lat": None}},
     )
-    assert finalized.output_ids == ["status"]
+    assert finalized.output_ids == ["denoised"]
 
 
-def test_fromInput_finalizes_slot_by_resolved_type():
-    schema_inputs = [io.DynamicSlot.Input("slot", options=_slot_options_with_outputs())]
-    schema_outputs = [io.DynamicOutputs.FromInput("slot")]
-    # Connected with resolved type IMAGE → first option matches
+def test_schema_rejects_bykey_key_not_on_dynamic_combo():
+    class StrayKey(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="StrayKey",
+                inputs=[_combo_input()],
+                outputs=[io.DynamicOutputs.ByKey(id="r", selector="mode", options=[
+                    io.DynamicOutputs.Option(key="image", outputs=[io.Image.Output("a")]),
+                    io.DynamicOutputs.Option(key="audio", outputs=[io.String.Output("b")]),
+                ])],
+            )
+
+        @classmethod
+        def execute(cls, **kwargs):
+            return io.NodeOutput.from_named({})
+
+    with pytest.raises(ValueError, match=r"option key\(s\) \['audio'\] are not declared"):
+        StrayKey.GET_SCHEMA()
+
+
+# ---------------------------------------------------------------------------
+# DynamicOutputs.BySlot
+# ---------------------------------------------------------------------------
+
+def _slot_input():
+    return io.DynamicSlot.Input("slot", options=[
+        io.DynamicSlot.Option(when=io.Image),
+        io.DynamicSlot.Option(when=io.Latent),
+        io.DynamicSlot.Option(when=None, inputs=[io.Int.Input("seed")]),
+    ])
+
+
+def _byslot_outputs():
+    return io.DynamicOutputs.BySlot(id="slot_out", selector="slot", options=[
+        io.DynamicOutputs.SlotOption(when=io.Image, outputs=[io.Image.Output("processed"), io.Mask.Output("alpha")]),
+        io.DynamicOutputs.SlotOption(when=io.Latent, outputs=[io.Latent.Output("denoised")]),
+        io.DynamicOutputs.SlotOption(when=None, outputs=[]),
+    ])
+
+
+def test_byslot_finalizes_by_resolved_type():
     finalized = io.get_finalized_class_outputs(
-        schema_outputs,
+        [_byslot_outputs()],
         {"slot": ["upstream", 0]},
-        schema_inputs=schema_inputs,
         live_input_types={"slot": "IMAGE"},
     )
     assert finalized.output_ids == ["processed", "alpha"]
-    # Connected, LATENT branch
     finalized = io.get_finalized_class_outputs(
-        schema_outputs,
+        [_byslot_outputs()],
         {"slot": ["upstream", 0]},
-        schema_inputs=schema_inputs,
         live_input_types={"slot": "LATENT"},
     )
     assert finalized.output_ids == ["denoised"]
 
 
-def test_fromInput_slot_unconnected_uses_when_none_option():
-    schema_inputs = [io.DynamicSlot.Input("slot", options=_slot_options_with_outputs())]
-    schema_outputs = [io.DynamicOutputs.FromInput("slot")]
-    finalized = io.get_finalized_class_outputs(
-        schema_outputs, {}, schema_inputs=schema_inputs,
-    )
+def test_byslot_unconnected_uses_when_none():
+    finalized = io.get_finalized_class_outputs([_byslot_outputs()], {})
     # when=None option declares outputs=[] → no active outputs
     assert finalized.output_ids == []
 
 
-def test_fromInput_slot_unmatched_type_yields_empty():
-    """Resolved upstream type with no matching option contributes no slots."""
-    schema_inputs = [io.DynamicSlot.Input("slot", options=_slot_options_with_outputs())]
-    schema_outputs = [io.DynamicOutputs.FromInput("slot")]
+def test_byslot_unmatched_type_yields_empty():
     finalized = io.get_finalized_class_outputs(
-        schema_outputs,
+        [_byslot_outputs()],
         {"slot": ["upstream", 0]},
-        schema_inputs=schema_inputs,
         live_input_types={"slot": "AUDIO"},
     )
     assert finalized.output_ids == []
 
 
-def test_schema_rejects_fromInput_pointing_at_missing_input():
-    class BadRef(io.ComfyNode):
+def test_byslot_rejects_duplicate_when_types():
+    with pytest.raises(ValueError, match="appears in more than one option"):
+        io.DynamicOutputs.BySlot(id="r", selector="slot", options=[
+            io.DynamicOutputs.SlotOption(when=io.Image, outputs=[io.Image.Output("a")]),
+            io.DynamicOutputs.SlotOption(when=io.Image, outputs=[io.Mask.Output("b")]),
+        ])
+
+
+def test_byslot_rejects_duplicate_when_none():
+    with pytest.raises(ValueError, match="only one option may declare when=None"):
+        io.DynamicOutputs.BySlot(id="r", selector="slot", options=[
+            io.DynamicOutputs.SlotOption(when=None, outputs=[]),
+            io.DynamicOutputs.SlotOption(when=None, outputs=[io.Image.Output("x")]),
+        ])
+
+
+def test_schema_rejects_byslot_selector_not_a_dynamic_slot():
+    class WrongSel(io.ComfyNode):
         @classmethod
         def define_schema(cls):
             return io.Schema(
-                node_id="BadRef",
-                inputs=[io.Combo.Input("mode", options=["a"])],
-                outputs=[io.DynamicOutputs.FromInput("does_not_exist")],
+                node_id="WrongSel",
+                inputs=[io.Combo.Input("not_a_slot", options=["a"])],
+                outputs=[io.DynamicOutputs.BySlot(id="r", selector="not_a_slot", options=[
+                    io.DynamicOutputs.SlotOption(when=io.Image, outputs=[io.Image.Output("x")]),
+                ])],
             )
 
         @classmethod
         def execute(cls, **kwargs):
             return io.NodeOutput.from_named({})
 
-    with pytest.raises(ValueError, match="must reference a DynamicCombo or DynamicSlot"):
-        BadRef.GET_SCHEMA()
+    with pytest.raises(ValueError, match="must reference a DynamicSlot input"):
+        WrongSel.GET_SCHEMA()
 
 
-def test_schema_rejects_fromInput_referenced_more_than_once():
-    class DupRef(io.ComfyNode):
+def test_schema_rejects_byslot_when_type_not_on_slot():
+    class StrayWhen(io.ComfyNode):
         @classmethod
         def define_schema(cls):
             return io.Schema(
-                node_id="DupRef",
-                inputs=[io.DynamicCombo.Input("mode", options=_combo_options_with_outputs())],
-                outputs=[io.DynamicOutputs.FromInput("mode"), io.DynamicOutputs.FromInput("mode")],
+                node_id="StrayWhen",
+                inputs=[_slot_input()],
+                outputs=[io.DynamicOutputs.BySlot(id="r", selector="slot", options=[
+                    io.DynamicOutputs.SlotOption(when=io.Audio, outputs=[io.Audio.Output("x")]),
+                ])],
             )
 
         @classmethod
         def execute(cls, **kwargs):
             return io.NodeOutput.from_named({})
 
-    with pytest.raises(ValueError, match="referenced more than once"):
-        DupRef.GET_SCHEMA()
+    with pytest.raises(ValueError, match=r"type\(s\) \['AUDIO'\] are not accepted"):
+        StrayWhen.GET_SCHEMA()
 
 
-def test_schema_rejects_fromInput_output_collision_with_static():
-    class Collision(io.ComfyNode):
+def test_schema_rejects_byslot_when_none_without_slot_when_none():
+    class NoNone(io.ComfyNode):
         @classmethod
         def define_schema(cls):
             return io.Schema(
-                node_id="Collision",
-                inputs=[
-                    io.DynamicCombo.Input("mode", options=[
-                        io.DynamicCombo.Option(
-                            key="image", inputs=[io.Image.Input("img")],
-                            outputs=[io.Image.Output("processed")],
-                        ),
-                    ]),
-                ],
-                outputs=[io.Image.Output("processed"), io.DynamicOutputs.FromInput("mode")],
+                node_id="NoNone",
+                inputs=[io.DynamicSlot.Input("slot", optional=False, options=[
+                    io.DynamicSlot.Option(when=io.Image),
+                ])],
+                outputs=[io.DynamicOutputs.BySlot(id="r", selector="slot", options=[
+                    io.DynamicOutputs.SlotOption(when=None, outputs=[]),
+                ])],
             )
 
         @classmethod
         def execute(cls, **kwargs):
-            return io.NodeOutput.from_named({"processed": None})
+            return io.NodeOutput.from_named({})
 
-    with pytest.raises(ValueError, match="Output ids must be unique"):
-        Collision.GET_SCHEMA()
+    with pytest.raises(ValueError, match="requires DynamicSlot 'slot' to declare a when=None"):
+        NoNone.GET_SCHEMA()
 
 
-def test_v1_info_emits_by_key_for_combo_fromInput():
+def test_v1_info_emits_byslot_entry():
     class N(io.ComfyNode):
         @classmethod
         def define_schema(cls):
             return io.Schema(
-                node_id="ComboFI",
-                inputs=[io.DynamicCombo.Input("mode", options=_combo_options_with_outputs())],
-                outputs=[io.DynamicOutputs.FromInput("mode")],
-            )
-
-        @classmethod
-        def execute(cls, **kwargs):
-            return io.NodeOutput.from_named({})
-
-    N.GET_SCHEMA()
-    info = N.SCHEMA.get_v1_info(N)
-    assert info.dynamic_outputs is not None and len(info.dynamic_outputs) == 1
-    entry = info.dynamic_outputs[0]
-    assert entry["kind"] == "by_key"
-    assert entry["selector"] == "mode"
-    keys = {opt["key"] for opt in entry["options"]}
-    assert keys == {"image", "latent"}
-
-
-def test_v1_info_emits_by_slot_for_slot_fromInput():
-    class N(io.ComfyNode):
-        @classmethod
-        def define_schema(cls):
-            return io.Schema(
-                node_id="SlotFI",
-                inputs=[io.DynamicSlot.Input("slot", options=_slot_options_with_outputs())],
-                outputs=[io.DynamicOutputs.FromInput("slot")],
+                node_id="SlotV1",
+                inputs=[_slot_input()],
+                outputs=[_byslot_outputs()],
             )
 
         @classmethod

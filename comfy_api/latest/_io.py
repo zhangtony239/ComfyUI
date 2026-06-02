@@ -1141,46 +1141,20 @@ class Autogrow(ComfyTypeI):
             out_dict["dynamic_paths_default_value"][finalized_prefix] = DynamicPathsDefaultValue.EMPTY_DICT
         parse_class_inputs(out_dict, live_inputs, new_dict, curr_prefix, live_input_types)
 
-def _validate_option_outputs(label: str, outputs: list[Output] | None) -> list[Output]:
-    """Validate option outputs once at construction; return [] for missing/empty."""
-    if outputs is None:
-        return []
-    for o in outputs:
-        if not isinstance(o, Output):
-            raise ValueError(f"{label}: outputs must contain Output instances, got {o!r}")
-        if o.id is None:
-            raise ValueError(f"{label}: every output must declare an id")
-    return outputs
-
-
-def _serialize_option_outputs(outputs: list[Output]) -> list[dict] | None:
-    """Inline-serialize option outputs for V1 info; None drops the field via prune_dict."""
-    if not outputs:
-        return None
-    return [
-        {"id": o.id, "type": o.get_io_type(), **o.as_dict()}
-        for o in outputs
-    ]
-
-
 @comfytype(io_type="COMFY_DYNAMICCOMBO_V3")
 class DynamicCombo(ComfyTypeI):
     Type = dict[str, Any]
 
     class Option:
-        def __init__(self, key: str, inputs: list[Input], outputs: list[Output] | None = None):
+        def __init__(self, key: str, inputs: list[Input]):
             self.key = key
             self.inputs = inputs
-            # When this DynamicCombo input is referenced by DynamicOutputs.FromInput,
-            # the active option's ``outputs`` are spliced into the finalized list.
-            self.outputs = _validate_option_outputs("DynamicCombo.Option", outputs)
 
         def as_dict(self):
-            return prune_dict({
+            return {
                 "key": self.key,
                 "inputs": create_input_dict_v1(self.inputs),
-                "outputs": _serialize_option_outputs(self.outputs),
-            })
+            }
 
     class Input(DynamicInput):
         def __init__(self, id: str, options: list[DynamicCombo.Option],
@@ -1250,12 +1224,9 @@ class DynamicSlot(ComfyTypeI):
           * a list of ComfyType classes (shared branch across multiple types)
           * a ``MultiType.Input`` instance (parsed via its ``.io_types``)
         """
-        def __init__(self, when: Any, inputs: list[Input] = None, outputs: list[Output] | None = None):
+        def __init__(self, when: Any, inputs: list[Input] = None):
             self.when = when
             self.inputs = inputs or []
-            # When this DynamicSlot input is referenced by DynamicOutputs.FromInput,
-            # the active option's ``outputs`` are spliced into the finalized list.
-            self.outputs = _validate_option_outputs("DynamicSlot.Option", outputs)
             # ``_when_types`` is the ordered tuple of io_types (deterministic);
             # ``_when_set`` is the same content as a set for fast matching.
             self._when_types = self._normalize_when(when)
@@ -1301,16 +1272,10 @@ class DynamicSlot(ComfyTypeI):
             )
 
         def as_dict(self):
-            # ``when`` is preserved even when None (meaningful "unconnected" branch);
-            # ``outputs`` is pruned when absent so existing serializations don't drift.
-            d = {
+            return {
                 "when": None if self._when_types is None else list(self._when_types),
                 "inputs": create_input_dict_v1(self.inputs),
             }
-            outs = _serialize_option_outputs(self.outputs)
-            if outs is not None:
-                d["outputs"] = outs
-            return d
 
     class Input(DynamicInput):
         def __init__(self, id: str, options: list[DynamicSlot.Option],
@@ -1455,48 +1420,56 @@ class DynamicOutputs:
 
     Forms:
 
-      * :py:class:`DynamicOutputs.ByKey` — outputs are declared inline on the
-        group and picked by the literal value of a same-node selector input.
-      * :py:class:`DynamicOutputs.FromInput` — positional placeholder that
-        reuses the per-option ``outputs=[…]`` declared on a
-        :py:class:`DynamicCombo.Input` or :py:class:`DynamicSlot.Input`,
-        keeping the option content single-sourced.
+      * :py:class:`DynamicOutputs.ByKey` — selector is a literal input
+        (``Combo`` / ``DynamicCombo`` / ``String`` / etc.) and the active
+        option is chosen by direct value comparison against ``Option.key``.
+      * :py:class:`DynamicOutputs.BySlot` — selector is a
+        :py:class:`DynamicSlot.Input` and the active option is chosen by
+        the slot's resolved upstream type, matching ``Option.when``.
 
     Inactive options do not produce placeholder slots — downstream links to
     nonexistent finalized slots are rejected by validation.
     """
 
     class Option:
-        """One branch of outputs revealed when the selector matches ``key``."""
+        """A branch of outputs for :py:class:`DynamicOutputs.ByKey`."""
 
         def __init__(self, key: str, outputs: list[Output]):
             if not isinstance(key, str) or not key:
                 raise ValueError("DynamicOutputs.Option: key must be a non-empty string")
-            for o in outputs:
-                if not isinstance(o, Output):
-                    raise ValueError(
-                        f"DynamicOutputs.Option: outputs must contain Output instances, got {o!r}"
-                    )
-                if o.id is None:
-                    raise ValueError("DynamicOutputs.Option: every output must declare an id")
+            _validate_outputs("DynamicOutputs.Option", outputs)
             self.key = key
             self.outputs = outputs
 
         def as_dict(self):
+            return {"key": self.key, "outputs": _serialize_outputs(self.outputs)}
+
+    class SlotOption:
+        """A branch of outputs for :py:class:`DynamicOutputs.BySlot`.
+
+        ``when`` accepts the same shapes as :py:class:`DynamicSlot.Option.when`
+        (``None``, ``io.AnyType``, a single ComfyType class, a list of classes,
+        or a ``MultiType.Input``); validation requires it to be a subset of the
+        target ``DynamicSlot.Input``'s declared types.
+        """
+
+        def __init__(self, when: Any, outputs: list[Output]):
+            _validate_outputs("DynamicOutputs.SlotOption", outputs)
+            self.when = when
+            self.outputs = outputs
+            self._when_types = DynamicSlot.Option._normalize_when(when)
+            self._when_set: frozenset[str] | None = (
+                None if self._when_types is None else frozenset(self._when_types)
+            )
+
+        def as_dict(self):
             return {
-                "key": self.key,
-                "outputs": [
-                    {
-                        "id": o.id,
-                        "type": o.get_io_type(),
-                        **o.as_dict(),
-                    }
-                    for o in self.outputs
-                ],
+                "when": None if self._when_types is None else list(self._when_types),
+                "outputs": _serialize_outputs(self.outputs),
             }
 
     class ByKey:
-        """Active outputs are picked by the literal value of one of the node's inputs."""
+        """Active outputs picked by the literal value of a same-node input."""
 
         kind = "by_key"
 
@@ -1539,7 +1512,11 @@ class DynamicOutputs:
         def select(self, prompt_inputs: dict[str, Any]) -> DynamicOutputs.Option | None:
             """Pick the matching ``Option`` for the prompt's selector value, or ``None``."""
             value = prompt_inputs.get(self.selector)
-            # Links are ``[node_id, slot_idx]`` lists; for this slice we only accept literals.
+            # DynamicCombo wraps the literal in a nested dict {selector_id: {selector_id: key, ...}};
+            # unwrap so authors don't have to special-case it.
+            if isinstance(value, dict):
+                value = value.get(self.selector)
+            # Links are ``[node_id, slot_idx]`` lists; only literals finalize.
             if isinstance(value, list):
                 return None
             for opt in self.options:
@@ -1547,55 +1524,91 @@ class DynamicOutputs:
                     return opt
             return None
 
-    class FromInput:
-        """Positional placeholder that pulls outputs from a referenced dynamic input.
+    class BySlot:
+        """Active outputs picked by the resolved upstream type of a DynamicSlot input."""
 
-        Set ``input_id`` to the id of a :py:class:`DynamicCombo.Input` or
-        :py:class:`DynamicSlot.Input` on the same node. At finalization time
-        the active option of that input contributes its ``outputs=[…]`` here.
-        """
+        kind = "by_slot"
 
-        # ``kind`` is filled at finalize-time from the resolved source input
-        # ("by_key" for DynamicCombo, "by_slot" for DynamicSlot).
-        kind = "from_input"
+        def __init__(self, id: str, selector: str, options: list[DynamicOutputs.SlotOption]):
+            if not isinstance(id, str) or not id:
+                raise ValueError("DynamicOutputs.BySlot: id must be a non-empty string")
+            if not isinstance(selector, str) or not selector:
+                raise ValueError("DynamicOutputs.BySlot: selector must be a non-empty string input id")
+            if not options:
+                raise ValueError("DynamicOutputs.BySlot: at least one Option is required")
+            seen_types: set[str] = set()
+            seen_none = False
+            seen_ids: set[str] = set()
+            for opt in options:
+                if not isinstance(opt, DynamicOutputs.SlotOption):
+                    raise ValueError(
+                        f"DynamicOutputs.BySlot: options must be DynamicOutputs.SlotOption, got {opt!r}"
+                    )
+                if opt._when_types is None:
+                    if seen_none:
+                        raise ValueError("DynamicOutputs.BySlot: only one option may declare when=None")
+                    seen_none = True
+                else:
+                    for t in opt._when_types:
+                        if t in seen_types:
+                            raise ValueError(
+                                f"DynamicOutputs.BySlot: type {t!r} appears in more than one option; "
+                                "each type must be claimed by exactly one option"
+                            )
+                        seen_types.add(t)
+                for o in opt.outputs:
+                    if o.id in seen_ids:
+                        raise ValueError(
+                            f"DynamicOutputs.BySlot: output id {o.id!r} appears in more than one option; "
+                            "each output id must be unique within the group"
+                        )
+                    seen_ids.add(o.id)
+            self.id = id
+            self.selector = selector
+            self.options = options
 
-        def __init__(self, input_id: str):
-            if not isinstance(input_id, str) or not input_id:
-                raise ValueError("DynamicOutputs.FromInput: input_id must be a non-empty string")
-            self.input_id = input_id
-
-
-def _from_input_as_dict(placeholder: DynamicOutputs.FromInput, source) -> dict[str, Any]:
-    """Synthesize a ``dynamic_outputs`` entry for a ``FromInput`` placeholder.
-
-    Inlines the outputs of each option so the frontend can render output pins
-    without cross-referencing the input declaration. ``kind`` is ``"by_key"``
-    for DynamicCombo (literal-driven) or ``"by_slot"`` for DynamicSlot
-    (resolved-type-driven).
-    """
-    if isinstance(source, DynamicCombo.Input):
-        return {
-            "id": placeholder.input_id,
-            "kind": "by_key",
-            "selector": source.id,
-            "options": [
-                {"key": opt.key, "outputs": _serialize_option_outputs(opt.outputs) or []}
-                for opt in source.options
-            ],
-        }
-    # DynamicSlot.Input
-    return {
-        "id": placeholder.input_id,
-        "kind": "by_slot",
-        "selector": source.id,
-        "options": [
-            {
-                "when": None if opt._when_types is None else list(opt._when_types),
-                "outputs": _serialize_option_outputs(opt.outputs) or [],
+        def as_dict(self):
+            return {
+                "id": self.id,
+                "kind": self.kind,
+                "selector": self.selector,
+                "options": [opt.as_dict() for opt in self.options],
             }
-            for opt in source.options
-        ],
-    }
+
+        def select(self, prompt_inputs: dict[str, Any],
+                   live_input_types: dict[str, str] | None) -> DynamicOutputs.SlotOption | None:
+            """Pick the matching ``SlotOption`` for the slot's resolved type."""
+            raw = prompt_inputs.get(self.selector)
+            has_link = isinstance(raw, list) and raw is not None
+            if not has_link:
+                for opt in self.options:
+                    if opt._when_types is None:
+                        return opt
+                return None
+            resolved = (live_input_types or {}).get(self.selector, "*")
+            resolved_set = {t.strip() for t in resolved.split(",")}
+            for opt in self.options:
+                if opt._when_types is None:
+                    continue
+                if resolved_set & opt._when_set:
+                    return opt
+            return None
+
+
+def _validate_outputs(label: str, outputs: list[Output]) -> None:
+    """Sanity-check a list of outputs at option construction."""
+    if not outputs:
+        return
+    for o in outputs:
+        if not isinstance(o, Output):
+            raise ValueError(f"{label}: outputs must contain Output instances, got {o!r}")
+        if o.id is None:
+            raise ValueError(f"{label}: every output must declare an id")
+
+
+def _serialize_outputs(outputs: list[Output]) -> list[dict]:
+    """Inline-serialize outputs for V1 ``dynamic_outputs`` entries."""
+    return [{"id": o.id, "type": o.get_io_type(), **o.as_dict()} for o in outputs]
 
 
 def _output_metadata(o: Output) -> tuple[str, str, str, bool, str | None]:
@@ -1605,62 +1618,18 @@ def _output_metadata(o: Output) -> tuple[str, str, str, bool, str | None]:
     return o.id, rt, name, o.is_output_list, (o.tooltip if o.tooltip else None)
 
 
-def _select_from_input_outputs(
-    placeholder: DynamicOutputs.FromInput,
-    schema_inputs: list | None,
-    prompt_inputs: dict[str, Any],
-    live_input_types: dict[str, str] | None,
-) -> list[Output]:
-    """Return the active option's outputs for a ``FromInput`` placeholder."""
-    if not schema_inputs:
-        return []
-    source = next(
-        (i for i in schema_inputs
-         if isinstance(i, (DynamicCombo.Input, DynamicSlot.Input)) and i.id == placeholder.input_id),
-        None,
-    )
-    if source is None:
-        return []
-    if isinstance(source, DynamicCombo.Input):
-        value = prompt_inputs.get(source.id)
-        if isinstance(value, list):  # link, not a literal — no branch finalizable
-            return []
-        for opt in source.options:
-            if opt.key == value:
-                return opt.outputs
-        return []
-    # DynamicSlot: matched by resolved upstream type (or when=None when unlinked).
-    raw = prompt_inputs.get(source.id)
-    has_link = isinstance(raw, list) and raw is not None
-    if not has_link:
-        for opt in source.options:
-            if opt._when_types is None:
-                return opt.outputs
-        return []
-    resolved = (live_input_types or {}).get(source.id, "*")
-    resolved_set = {t.strip() for t in resolved.split(",")}
-    for opt in source.options:
-        if opt._when_types is None:
-            continue
-        if resolved_set & opt._when_set:
-            return opt.outputs
-    return []
-
-
 def get_finalized_class_outputs(
     schema_outputs: list,
     prompt_inputs: dict[str, Any] | None,
-    schema_inputs: list | None = None,
     live_input_types: dict[str, str] | None = None,
 ) -> FinalizedOutputs:
     """Resolve the active output list for a node.
 
     Expands :py:class:`DynamicOutputs.ByKey` against ``prompt_inputs`` and
-    :py:class:`DynamicOutputs.FromInput` against the matching
-    :py:class:`DynamicCombo.Input` / :py:class:`DynamicSlot.Input` (using
-    ``live_input_types`` for the slot case). Inactive options contribute
-    no slots — downstream links to nonexistent finalized slots are caught
-    by validation rather than silently filled with ``AnyType`` placeholders.
+    :py:class:`DynamicOutputs.BySlot` against ``live_input_types``. Inactive
+    options contribute no slots — downstream links to ranges that only existed
+    under a different branch are caught by validation rather than silently
+    filled with ``AnyType`` placeholders.
     """
     inputs = prompt_inputs or {}
     outputs: list[Output] = []
@@ -1687,9 +1656,11 @@ def get_finalized_class_outputs(
             if selected is not None:
                 for o in selected.outputs:
                     append_output(o)
-        elif isinstance(entry, DynamicOutputs.FromInput):
-            for o in _select_from_input_outputs(entry, schema_inputs, inputs, live_input_types):
-                append_output(o)
+        elif isinstance(entry, DynamicOutputs.BySlot):
+            selected = entry.select(inputs, live_input_types)
+            if selected is not None:
+                for o in selected.outputs:
+                    append_output(o)
         # else: ignore unknown entries (future-proofing for new dynamic kinds)
     return FinalizedOutputs(
         outputs=outputs,
@@ -2073,9 +2044,12 @@ class Schema:
 
     def validate(self):
         '''Validate the schema:
-        - verify ids on inputs and outputs are unique - both internally and in relation to each other
-        - verify dynamic-output groups reference real inputs and have unique active ids
-        - verify DynamicOutputs.FromInput placeholders reference real DynamicCombo / DynamicSlot inputs
+        - input/output ids are unique within and across each other
+        - DynamicOutputs.ByKey / BySlot have unique group ids
+        - ByKey selectors reference a real input (literal alignment validated when
+          the selector is a DynamicCombo)
+        - BySlot selectors reference a real DynamicSlot input and every option's
+          ``when`` is accepted by that slot
         '''
         nested_inputs: list[Input] = []
         for input in self.inputs:
@@ -2083,80 +2057,94 @@ class Schema:
                 nested_inputs.extend(input.get_all())
         input_ids = [i.id for i in nested_inputs]
         input_set = set(input_ids)
-        dynamic_input_ids = {
-            i.id for i in self.inputs if isinstance(i, (DynamicCombo.Input, DynamicSlot.Input))
-        }
-        from_input_refs = [
-            o.input_id for o in self.outputs if isinstance(o, DynamicOutputs.FromInput)
-        ]
+        combo_inputs = {i.id: i for i in self.inputs if isinstance(i, DynamicCombo.Input)}
+        slot_inputs = {i.id: i for i in self.inputs if isinstance(i, DynamicSlot.Input)}
+        # selector lookup covers both static (nested) inputs and DynamicCombo/Slot
+        # top-level inputs, since DynamicInput instances aren't included in nested_inputs.
+        all_selectable_ids = input_set | set(combo_inputs) | set(slot_inputs)
 
         # ``output_ids`` covers every id that may ever appear in a finalized
         # output list — static outputs + every option's outputs across every
-        # dynamic group + outputs from any dynamic-input referenced by a
-        # FromInput — so collisions between branches are caught up front.
+        # dynamic group — so collisions between branches are caught up front.
         output_ids: list[str] = []
         for o in self.outputs:
             if isinstance(o, Output):
                 output_ids.append(o.id)
-            elif isinstance(o, DynamicOutputs.ByKey):
+            elif isinstance(o, (DynamicOutputs.ByKey, DynamicOutputs.BySlot)):
                 for opt in o.options:
-                    output_ids.extend(child.id for child in opt.outputs)
-        referenced = set(from_input_refs)
-        for inp in self.inputs:
-            if isinstance(inp, (DynamicCombo.Input, DynamicSlot.Input)) and inp.id in referenced:
-                for opt in inp.options:
                     output_ids.extend(child.id for child in opt.outputs)
 
         output_set = set(output_ids)
         issues: list[str] = []
-        # verify ids are unique per list
         if len(input_set) != len(input_ids):
             issues.append(f"Input ids must be unique, but {[item for item, count in Counter(input_ids).items() if count > 1]} are not.")
         if len(output_set) != len(output_ids):
             issues.append(f"Output ids must be unique, but {[item for item, count in Counter(output_ids).items() if count > 1]} are not.")
-        # ByKey: unique group ids + selectors point at real (literal) inputs
+
         group_ids: list[str] = []
         for o in self.outputs:
             if isinstance(o, DynamicOutputs.ByKey):
                 group_ids.append(o.id)
-                if o.selector not in input_set:
+                if o.selector not in all_selectable_ids:
                     issues.append(
                         f"DynamicOutputs.ByKey(id={o.id!r}) selector input {o.selector!r} "
                         f"does not exist on the schema."
                     )
+                # If the selector is a DynamicCombo, every option key must match one of its keys.
+                if o.selector in combo_inputs:
+                    valid_keys = {opt.key for opt in combo_inputs[o.selector].options}
+                    stray = [opt.key for opt in o.options if opt.key not in valid_keys]
+                    if stray:
+                        issues.append(
+                            f"DynamicOutputs.ByKey(id={o.id!r}) option key(s) {stray!r} are not "
+                            f"declared on DynamicCombo input {o.selector!r} (valid: {sorted(valid_keys)!r})."
+                        )
+            elif isinstance(o, DynamicOutputs.BySlot):
+                group_ids.append(o.id)
+                if o.selector not in slot_inputs:
+                    issues.append(
+                        f"DynamicOutputs.BySlot(id={o.id!r}) selector {o.selector!r} must reference "
+                        f"a DynamicSlot input on the schema."
+                    )
+                else:
+                    slot = slot_inputs[o.selector]
+                    slot_accepted = set()
+                    slot_has_none = False
+                    for sopt in slot.options:
+                        if sopt._when_types is None:
+                            slot_has_none = True
+                        else:
+                            slot_accepted.update(sopt._when_types)
+                    for opt in o.options:
+                        if opt._when_types is None:
+                            if not slot_has_none:
+                                issues.append(
+                                    f"DynamicOutputs.BySlot(id={o.id!r}) option(when=None) requires "
+                                    f"DynamicSlot {o.selector!r} to declare a when=None option."
+                                )
+                        else:
+                            stray_types = [t for t in opt._when_types if t not in slot_accepted]
+                            if stray_types:
+                                issues.append(
+                                    f"DynamicOutputs.BySlot(id={o.id!r}) option type(s) {stray_types!r} "
+                                    f"are not accepted by DynamicSlot {o.selector!r} "
+                                    f"(accepted: {sorted(slot_accepted)!r})."
+                                )
         if len(set(group_ids)) != len(group_ids):
             issues.append(
                 f"DynamicOutputs group ids must be unique, but "
                 f"{[i for i, c in Counter(group_ids).items() if c > 1]} are not."
             )
-        # FromInput: each ref points at a DynamicCombo / DynamicSlot input and is unique
-        for ref in from_input_refs:
-            if ref not in dynamic_input_ids:
-                issues.append(
-                    f"DynamicOutputs.FromInput(input_id={ref!r}) must reference a "
-                    f"DynamicCombo or DynamicSlot input on the schema."
-                )
-        if len(set(from_input_refs)) != len(from_input_refs):
-            issues.append(
-                f"DynamicOutputs.FromInput: each input may be referenced at most once, but "
-                f"{[r for r, c in Counter(from_input_refs).items() if c > 1]} are referenced more than once."
-            )
         if len(issues) > 0:
             raise ValueError("\n".join(issues))
-        # validate inputs and outputs
+        # per-element validation
         for input in self.inputs:
             input.validate()
         for output in self.outputs:
             if isinstance(output, Output):
                 output.validate()
-            elif isinstance(output, DynamicOutputs.ByKey):
+            elif isinstance(output, (DynamicOutputs.ByKey, DynamicOutputs.BySlot)):
                 for opt in output.options:
-                    for child in opt.outputs:
-                        child.validate()
-        # Validate option-outputs declared on dynamic inputs (whether referenced or not).
-        for inp in self.inputs:
-            if isinstance(inp, (DynamicCombo.Input, DynamicSlot.Input)):
-                for opt in inp.options:
                     for child in opt.outputs:
                         child.validate()
         if self.price_badge is not None:
@@ -2205,18 +2193,10 @@ class Schema:
         output_matchtypes = []
         any_matchtypes = False
         dynamic_outputs: list[dict[str, Any]] = []
-        dynamic_inputs_by_id = {
-            i.id: i for i in self.inputs if isinstance(i, (DynamicCombo.Input, DynamicSlot.Input))
-        }
         if self.outputs:
             for o in self.outputs:
-                if isinstance(o, DynamicOutputs.ByKey):
+                if isinstance(o, (DynamicOutputs.ByKey, DynamicOutputs.BySlot)):
                     dynamic_outputs.append(o.as_dict())
-                    continue
-                if isinstance(o, DynamicOutputs.FromInput):
-                    source = dynamic_inputs_by_id.get(o.input_id)
-                    if source is not None:
-                        dynamic_outputs.append(_from_input_as_dict(o, source))
                     continue
                 output.append(o.io_type)
                 output_is_list.append(o.is_output_list)
