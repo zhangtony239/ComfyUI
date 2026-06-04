@@ -25,6 +25,11 @@ CLI_FEATURE_FLAG_REGISTRY: dict[str, FeatureFlagInfo] = {
         "default": False,
         "description": "Show the sign-in button in the frontend even when not signed in",
     },
+    "supports_terminal": {
+        "type": "bool",
+        "default": False,
+        "description": "An interactive terminal host is available for this server (e.g. ComfyUI Desktop), so the frontend may surface a terminal/console UI",
+    },
 }
 
 

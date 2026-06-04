@@ -181,3 +181,12 @@ class TestCliFeatureFlagRegistry:
             assert "type" in info, f"{key} missing 'type'"
             assert "default" in info, f"{key} missing 'default'"
             assert "description" in info, f"{key} missing 'description'"
+
+    def test_supports_terminal_registered_as_bool(self):
+        """supports_terminal must be a registered bool so --feature-flag
+        supports_terminal=true coerces to a real boolean. The frontend gates
+        on a strict `=== true` check, so a raw string 'true' would not work."""
+        assert "supports_terminal" in CLI_FEATURE_FLAG_REGISTRY
+        assert CLI_FEATURE_FLAG_REGISTRY["supports_terminal"]["type"] == "bool"
+        assert _coerce_flag_value("supports_terminal", "true") is True
+        assert _coerce_flag_value("supports_terminal", "false") is False
