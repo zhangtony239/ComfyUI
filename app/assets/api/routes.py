@@ -39,7 +39,7 @@ from app.assets.services import (
     update_asset_metadata,
     upload_from_temp_path,
 )
-from app.assets.services.cursor import InvalidCursorError
+from utils.cursor import InvalidCursorError
 from app.assets.services.tagging import list_tag_histogram
 
 ROUTES = web.RouteTableDef()

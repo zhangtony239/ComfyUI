@@ -1,4 +1,4 @@
-"""Tests for app.assets.services.cursor.
+"""Tests for utils.cursor.
 
 Cursors are opaque tokens internal to this server — these tests cover
 round-tripping, validation, and length caps, not any particular wire
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.assets.services.cursor import (
+from utils.cursor import (
     MAX_CURSOR_ID_LENGTH,
     MAX_CURSOR_VALUE_LENGTH,
     MAX_ENCODED_CURSOR_LENGTH,

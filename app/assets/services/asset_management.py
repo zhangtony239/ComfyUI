@@ -4,7 +4,7 @@ import os
 from datetime import timezone
 from typing import Sequence
 
-from app.assets.services.cursor import (
+from utils.cursor import (
     CursorPayload,
     InvalidCursorError,
     decode_cursor,

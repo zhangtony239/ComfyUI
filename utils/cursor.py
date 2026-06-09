@@ -1,4 +1,4 @@
-"""Opaque keyset-pagination cursor for /api/assets.
+"""Opaque keyset-pagination cursor shared by /api/assets and /api/jobs.
 
 Payload JSON uses short keys to keep the encoded length small:
 
