@@ -1,17 +1,4 @@
-# Input/output preprocessing helpers for Depth Anything 3.
-#
-# Ported from:
-#   src/depth_anything_3/utils/io/input_processor.py    (image normalisation)
-#   src/depth_anything_3/utils/alignment.py             (sky-aware depth clip)
-#   src/depth_anything_3/model/da3.py::_process_mono_sky_estimation
-#
-# Resize: ``comfy.utils.common_upscale`` with ``upscale_method="lanczos"``.
-# Upstream uses cv2 INTER_CUBIC (upscale) / INTER_AREA (downscale); a sweep
-# across {bilinear, bicubic, area, lanczos, bislerp} on a 768->504 test image
-# showed lanczos has the lowest max-abs-diff vs the upstream cv2 output
-# (~0.13 vs 0.21-0.71 for the others), so we use it in both directions for
-# simplicity. This keeps the path stateless, on-device, and free of any
-# OpenCV dependency.
+"""Input/output preprocessing helpers for Depth Anything 3."""
 
 from __future__ import annotations
 
@@ -34,16 +21,11 @@ def _round_to_patch(x: int, patch: int = PATCH_SIZE) -> int:
     return up if abs(up - x) <= abs(x - down) else down
 
 
-def compute_target_size(orig_h: int, orig_w: int, process_res: int,
-                        method: str = "upper_bound_resize") -> Tuple[int, int]:
+def compute_target_size(orig_h: int, orig_w: int, process_res: int, method: str = "upper_bound_resize") -> Tuple[int, int]:
     """Compute (target_h, target_w) for a single image.
+    upper_bound_resize: scale longest side to process_res, then round each dim to nearest multiple of 14 (default upstream method).
+    lower_bound_resize: scale shortest side to process_res, then round."""
 
-    Methods:
-      - "upper_bound_resize": scale longest side to ``process_res``, then
-        round each dim to nearest multiple of 14 (default upstream method).
-      - "lower_bound_resize": scale shortest side to ``process_res``, then
-        round.
-    """
     if method == "upper_bound_resize":
         longest = max(orig_h, orig_w)
         scale = process_res / float(longest)
@@ -58,26 +40,8 @@ def compute_target_size(orig_h: int, orig_w: int, process_res: int,
     return new_h, new_w
 
 
-def preprocess_image(
-    image: torch.Tensor,
-    process_res: int = 504,
-    method: str = "upper_bound_resize",
-) -> torch.Tensor:
-    """Preprocess a ComfyUI ``IMAGE`` batch for DA3.
-
-    Args:
-        image: ``(B, H, W, 3)`` float in [0, 1] (ComfyUI ``IMAGE`` convention).
-        process_res: target resolution (longest or shortest side, depending
-            on ``method``).
-        method: resize strategy.
-
-    Returns:
-        ``(B, 3, H', W')`` tensor with H' and W' multiples of 14, normalised
-        with ImageNet statistics. The tensor lives on the same device as
-        ``image``.
-    """
-    assert image.ndim == 4 and image.shape[-1] == 3, \
-        f"expected (B,H,W,3) IMAGE; got {tuple(image.shape)}"
+def preprocess_image(image: torch.Tensor, process_res: int = 504, method: str = "upper_bound_resize") -> torch.Tensor:
+    assert image.ndim == 4 and image.shape[-1] == 3, f"expected (B,H,W,3) IMAGE; got {tuple(image.shape)}"
     B, H, W, _ = image.shape
     target_h, target_w = compute_target_size(H, W, process_res, method)
 
@@ -88,9 +52,7 @@ def preprocess_image(
         # Lanczos in ``common_upscale`` is anti-aliased and produces the
         # closest pixel-wise match in a sweep across {bilinear, bicubic,
         # area, lanczos, bislerp}. Used in both directions for simplicity.
-        x = comfy.utils.common_upscale(
-            x.float(), target_w, target_h, "lanczos", "disabled",
-        )
+        x = comfy.utils.common_upscale(x.float(), target_w, target_h, "lanczos", "disabled",)
     x = x.clamp(0.0, 1.0)
 
     mean = _IMAGENET_MEAN.to(device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
@@ -109,17 +71,8 @@ def compute_non_sky_mask(sky_prediction: torch.Tensor, threshold: float = 0.3) -
     return sky_prediction < threshold
 
 
-def apply_sky_aware_clip(
-    depth: torch.Tensor,
-    sky: torch.Tensor,
-    threshold: float = 0.3,
-    quantile: float = 0.99,
-) -> torch.Tensor:
-    """Replicates ``_process_mono_sky_estimation`` from upstream.
-
-    Clips sky regions to the 99th percentile of non-sky depth. Returns a new
-    depth tensor; ``depth`` is not modified in place.
-    """
+def apply_sky_aware_clip(depth: torch.Tensor, sky: torch.Tensor, threshold: float = 0.3, quantile: float = 0.99) -> torch.Tensor:
+    """Clips sky regions to the 99th percentile of non-sky depth. Returns a new depth tensor."""
     non_sky = compute_non_sky_mask(sky, threshold=threshold)
     if non_sky.sum() <= 10 or (~non_sky).sum() <= 10:
         return depth.clone()
@@ -137,17 +90,8 @@ def apply_sky_aware_clip(
     return out
 
 
-def normalize_depth_v2_style(
-    depth: torch.Tensor,
-    sky: torch.Tensor | None = None,
-    low_quantile: float = 0.01,
-    high_quantile: float = 0.99,
-) -> torch.Tensor:
-    """V2-style normalization for ControlNet workflows.
-
-    Computes percentile bounds over non-sky pixels (when available),
-    then maps depth into [0, 1] with near = white (1.0).
-    """
+def normalize_depth_v2_style(depth: torch.Tensor, sky: torch.Tensor | None = None, low_quantile: float = 0.01, high_quantile: float = 0.99) -> torch.Tensor:
+    """V2-style normalization computes percentile bounds over non-sky pixels (when available), then maps depth into [0, 1] with near = white (1.0)."""
     if sky is not None:
         mask = compute_non_sky_mask(sky)
         if mask.any():
@@ -167,10 +111,10 @@ def normalize_depth_v2_style(
     hi = torch.quantile(sample, high_quantile)
     rng = (hi - lo).clamp(min=1e-6)
     norm = ((depth - lo) / rng).clamp(0.0, 1.0)
-    # ControlNet convention: nearer pixels are brighter (1.0).
+    # Nearer pixels are brighter (1.0)
     norm = 1.0 - norm
     if sky is not None:
-        # Sky pixels become black (far / unknown).
+        # Sky pixels become black (far / unknown)
         sky_mask = ~compute_non_sky_mask(sky)
         norm = torch.where(sky_mask, torch.zeros_like(norm), norm)
     return norm

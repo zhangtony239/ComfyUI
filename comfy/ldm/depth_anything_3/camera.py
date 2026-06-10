@@ -1,16 +1,4 @@
-"""Camera-token encoder and decoder for Depth Anything 3.
-
-* :class:`CameraEnc` takes per-view extrinsics + intrinsics and produces a
-  per-view camera token that gets injected at the alt-attention boundary
-  in the DINOv2 backbone (block ``alt_start``).
-* :class:`CameraDec` takes the final-layer camera token output by the
-  backbone and predicts a 9-D pose encoding (translation, quaternion,
-  field-of-view).
-
-The module/parameter names match the upstream ``cam_enc.py``/``cam_dec.py``
-so HF safetensors load directly with no key remapping (the upstream uses
-fused QKV linears, which we replicate here).
-"""
+"""Camera-token encoder and decoder for Depth Anything 3."""
 
 from __future__ import annotations
 
@@ -22,30 +10,27 @@ from comfy.ldm.modules.attention import optimized_attention_for_device
 from .transform import affine_inverse, extri_intri_to_pose_encoding
 
 
-# -----------------------------------------------------------------------------
-# Building blocks (mirror ``depth_anything_3.model.utils.{attention,block}``)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# Building blocks (mirror depth_anything_3.model.utils.{attention,block})
+# -----------------------------------------------------------------------
 
 
 class _Mlp(nn.Module):
     """Standard 2-layer MLP with GELU. Matches upstream ``utils.attention.Mlp``."""
 
-    def __init__(self, in_features, hidden_features=None, out_features=None,
-                 *, device=None, dtype=None, operations=None):
+    def __init__(self, in_features, hidden_features=None, out_features=None, *, device=None, dtype=None, operations=None):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = operations.Linear(in_features, hidden_features, bias=True,
-                                     device=device, dtype=dtype)
-        self.fc2 = operations.Linear(hidden_features, out_features, bias=True,
-                                     device=device, dtype=dtype)
+        self.fc1 = operations.Linear(in_features, hidden_features, bias=True, device=device, dtype=dtype)
+        self.fc2 = operations.Linear(hidden_features, out_features, bias=True, device=device, dtype=dtype)
 
     def forward(self, x):
         return self.fc2(F.gelu(self.fc1(x)))
 
 
 class _LayerScale(nn.Module):
-    """Per-channel learnable scaling. Matches upstream ``LayerScale``."""
+    """Per-channel learnable scaling. Matches upstream LayerScale."""
 
     def __init__(self, dim, *, device=None, dtype=None):
         super().__init__()
@@ -56,22 +41,16 @@ class _LayerScale(nn.Module):
 
 
 class _Attention(nn.Module):
-    """Self-attention with fused QKV projection.
+    """ Self-attention with fused QKV projection. Mirrors upstream utils.attention.Attention;
+    Layout matches the HF safetensors (attn.qkv.{weight,bias} and attn.proj.{weight,bias})."""
 
-    Mirrors upstream ``utils.attention.Attention``; layout matches the
-    HF safetensors (``attn.qkv.{weight,bias}`` and ``attn.proj.{weight,bias}``).
-    """
-
-    def __init__(self, dim, num_heads,
-                 *, device=None, dtype=None, operations=None):
+    def __init__(self, dim, num_heads, *, device=None, dtype=None, operations=None):
         super().__init__()
         assert dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.qkv = operations.Linear(dim, dim * 3, bias=True,
-                                     device=device, dtype=dtype)
-        self.proj = operations.Linear(dim, dim, bias=True,
-                                      device=device, dtype=dtype)
+        self.qkv = operations.Linear(dim, dim * 3, bias=True, device=device, dtype=dtype)
+        self.proj = operations.Linear(dim, dim, bias=True, device=device, dtype=dtype)
 
     def forward(self, x):
         B, N, C = x.shape
@@ -83,21 +62,15 @@ class _Attention(nn.Module):
 
 
 class _Block(nn.Module):
-    """Pre-norm transformer block with LayerScale.
+    """Pre-norm transformer block with LayerScale. Used by :class:CameraEnc. Layout follows upstream utils.block.Block."""
 
-    Used by :class:`CameraEnc`. Layout follows upstream ``utils.block.Block``.
-    """
-
-    def __init__(self, dim, num_heads, mlp_ratio=4, init_values=0.01,
-                 *, device=None, dtype=None, operations=None):
+    def __init__(self, dim, num_heads, mlp_ratio=4, init_values=0.01, *, device=None, dtype=None, operations=None):
         super().__init__()
         self.norm1 = operations.LayerNorm(dim, device=device, dtype=dtype)
-        self.attn = _Attention(dim, num_heads,
-                               device=device, dtype=dtype, operations=operations)
+        self.attn = _Attention(dim, num_heads, device=device, dtype=dtype, operations=operations)
         self.ls1 = _LayerScale(dim, device=device, dtype=dtype) if init_values else nn.Identity()
         self.norm2 = operations.LayerNorm(dim, device=device, dtype=dtype)
-        self.mlp = _Mlp(in_features=dim, hidden_features=int(dim * mlp_ratio),
-                        device=device, dtype=dtype, operations=operations)
+        self.mlp = _Mlp(in_features=dim, hidden_features=int(dim * mlp_ratio), device=device, dtype=dtype, operations=operations)
         self.ls2 = _LayerScale(dim, device=device, dtype=dtype) if init_values else nn.Identity()
 
     def forward(self, x):

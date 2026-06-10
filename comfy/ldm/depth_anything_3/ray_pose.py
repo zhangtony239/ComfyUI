@@ -1,21 +1,4 @@
-"""Ray-to-pose conversion for the multi-view path of Depth Anything 3.
-
-Converts the auxiliary "ray" output of :class:`DualDPT` (per-pixel camera
-ray vectors, predicted on the per-view local feature map) into per-view
-extrinsics + intrinsics. Implementation is a 1:1 port of
-``depth_anything_3.utils.ray_utils`` upstream, using a weighted-RANSAC
-homography fit followed by a QL decomposition.
-
-No learned parameters; pure tensor math. Output:
-
-* ``R``       -- ``(B, S, 3, 3)`` rotation matrix
-* ``T``       -- ``(B, S, 3)``   camera-space translation
-* ``focal_lengths``     -- ``(B, S, 2)``  in normalised image space (image=2x2)
-* ``principal_points``  -- ``(B, S, 2)``  ditto
-
-:func:`get_extrinsic_from_camray` wraps these into a 4x4 extrinsic matrix
-that the public node converts back into pixel-space intrinsics.
-"""
+"""Ray-to-pose conversion for the multi-view path of Depth Anything 3."""
 
 from __future__ import annotations
 
@@ -28,13 +11,10 @@ import torch
 
 
 def _ql_decomposition(A: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Decompose ``A = Q @ L`` with ``Q`` orthogonal and ``L`` lower-triangular.
-
+    """Decompose A = Q @ L with Q orthogonal and L lower-triangular.
     Implemented in terms of QR by reversing the columns/rows; the standard
-    trick from the upstream reference. Inputs ``A`` are ``(3, 3)``.
-    """
-    P = torch.tensor([[0, 0, 1], [0, 1, 0], [1, 0, 0]],
-                     device=A.device, dtype=A.dtype)
+    trick from the upstream reference. Inputs A are (3, 3)."""
+    P = torch.tensor([[0, 0, 1], [0, 1, 0], [1, 0, 0]], device=A.device, dtype=A.dtype)
     A_tilde = A @ P
     # CUDA QR is not implemented for fp16/bf16; upcast just for this call.
     Q_tilde, R_tilde = torch.linalg.qr(A_tilde.float())
@@ -44,8 +24,8 @@ def _ql_decomposition(A: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     L = P @ R_tilde @ P
     d = torch.diag(L)
     sign = torch.sign(d)
-    Q = Q * sign[None, :]            # scale columns of Q
-    L = L * sign[:, None]             # scale rows of L
+    Q = Q * sign[None, :]  # scale columns of Q
+    L = L * sign[:, None]  # scale rows of L
     return Q, L
 
 
@@ -58,12 +38,8 @@ def _homogenize_points(points: torch.Tensor) -> torch.Tensor:
 # -----------------------------------------------------------------------------
 
 
-def _find_homography_weighted_lsq(
-    src_pts: torch.Tensor,
-    dst_pts: torch.Tensor,
-    confident_weight: torch.Tensor,
-) -> torch.Tensor:
-    """Solve a single ``H`` with weighted least-squares (DLT)."""
+def _find_homography_weighted_lsq(src_pts: torch.Tensor, dst_pts: torch.Tensor, confident_weight: torch.Tensor,) -> torch.Tensor:
+    """Solve a single H with weighted least-squares (DLT)."""
     N = src_pts.shape[0]
     if N < 4:
         raise ValueError("At least 4 points are required to compute a homography.")
@@ -83,12 +59,8 @@ def _find_homography_weighted_lsq(
     return H / H[-1, -1]
 
 
-def _find_homography_weighted_lsq_batched(
-    src_pts_batch: torch.Tensor,
-    dst_pts_batch: torch.Tensor,
-    confident_weight_batch: torch.Tensor,
-) -> torch.Tensor:
-    """Batched DLT solver. Inputs ``(B, K, 2)`` / ``(B, K)``; output ``(B, 3, 3)``."""
+def _find_homography_weighted_lsq_batched(src_pts_batch: torch.Tensor, dst_pts_batch: torch.Tensor, confident_weight_batch: torch.Tensor) -> torch.Tensor:
+    """Batched DLT solver. Inputs (B, K, 2) / (B, K); output (B, 3, 3)."""
     B, K, _ = src_pts_batch.shape
     w = confident_weight_batch.sqrt().unsqueeze(2)
     x = src_pts_batch[:, :, 0:1]
@@ -117,10 +89,7 @@ def _ransac_find_homography_weighted_batched(
     max_inlier_num: int = 10000,
     rand_sample_iters_idx: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """Batched weighted-RANSAC homography estimator.
-
-    Returns ``(B, 3, 3)`` homography matrices.
-    """
+    """Batched weighted-RANSAC homography estimator. Returns (B, 3, 3) homography matrices."""
     B, N, _ = src_pts.shape
     assert N >= 4
     device = src_pts.device
@@ -188,15 +157,8 @@ def _ransac_find_homography_weighted_batched(
 # -----------------------------------------------------------------------------
 
 
-def _unproject_identity(num_y: int, num_x: int, B: int, S: int,
-                        device, dtype) -> torch.Tensor:
-    """Camera-space unit rays for an identity intrinsic on a 2x2 image plane.
-
-    Replicates ``unproject_depth(..., ixt_normalized=True)`` upstream: pixel
-    coords ``(x, y)`` in ``[dx, 2-dx] x [dy, 2-dy]`` get mapped to
-    camera-space rays ``(x-1, y-1, 1)`` via the identity intrinsic
-    ``[[1,0,1],[0,1,1],[0,0,1]]``. Returns ``(B, S, num_y, num_x, 3)``.
-    """
+def _unproject_identity(num_y: int, num_x: int, B: int, S: int, device, dtype) -> torch.Tensor:
+    """Camera-space unit rays for an identity intrinsic on a 2x2 image plane."""
     dx = 1.0 / num_x
     dy = 1.0 / num_y
     # Centered camera-space coords directly (skip the K^-1 step since it's
@@ -210,7 +172,7 @@ def _unproject_identity(num_y: int, num_x: int, B: int, S: int,
 
 
 def _camray_to_caminfo(
-    camray: torch.Tensor,                   # (B, S, h, w, 6)
+    camray: torch.Tensor,  # (B, S, h, w, 6)
     confidence: Optional[torch.Tensor] = None,  # (B, S, h, w)
     reproj_threshold: float = 0.2,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -294,20 +256,12 @@ def _camray_to_caminfo(
 
 
 def get_extrinsic_from_camray(
-    camray: torch.Tensor,                       # (B, S, h, w, 6)
-    conf: torch.Tensor,                          # (B, S, h, w, 1) or (B, S, h, w)
+    camray: torch.Tensor,  # (B, S, h, w, 6)
+    conf: torch.Tensor,  # (B, S, h, w, 1) or (B, S, h, w)
     patch_size_y: int,
     patch_size_x: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Wrap a 4x4 extrinsic + per-view focal + principal-point output.
-
-    Returns:
-      * extrinsic   ``(B, S, 4, 4)``   camera-to-world (the inverse is
-                                       what gets stored in ``output.extrinsics``
-                                       by the caller).
-      * focals      ``(B, S, 2)``       in normalised image space.
-      * pp          ``(B, S, 2)``       in normalised image space.
-    """
+    """Wrap a 4x4 extrinsic + per-view focal + principal-point output."""
     if conf.ndim == 5 and conf.shape[-1] == 1:
         conf = conf.squeeze(-1)
     R, T, focal, pp = _camray_to_caminfo(camray, confidence=conf)

@@ -1,12 +1,4 @@
-# DPT / DualDPT heads for Depth Anything 3.
-#
-# Ported from:
-#   src/depth_anything_3/model/dpt.py        (DPT - single main head + sky head)
-#   src/depth_anything_3/model/dualdpt.py    (DualDPT - depth + auxiliary "ray" head)
-#
-# In the monocular path we always discard the auxiliary "ray" output of
-# DualDPT. The auxiliary branch is still constructed so that DA3 HF weights
-# load cleanly without missing-key warnings.
+"""DPT / DualDPT heads for Depth Anything 3."""
 
 from __future__ import annotations
 
@@ -15,11 +7,6 @@ from typing import List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-# -----------------------------------------------------------------------------
-# Helpers (matching upstream head_utils.py)
-# -----------------------------------------------------------------------------
 
 
 class Permute(nn.Module):
@@ -50,8 +37,7 @@ def _custom_interpolate(
     return F.interpolate(x, size=size, mode=mode, align_corners=align_corners)
 
 
-def _create_uv_grid(width: int, height: int, aspect_ratio: float,
-                    dtype, device) -> torch.Tensor:
+def _create_uv_grid(width: int, height: int, aspect_ratio: float, dtype, device) -> torch.Tensor:
     """Normalised UV grid spanning (-x_span, -y_span)..(x_span, y_span)."""
     diag_factor = (aspect_ratio ** 2 + 1.0) ** 0.5
     span_x = aspect_ratio / diag_factor
@@ -74,8 +60,7 @@ def _make_sincos_pos_embed(embed_dim: int, pos: torch.Tensor, omega_0: float = 1
     return torch.cat([out.sin(), out.cos()], dim=1).float()
 
 
-def _position_grid_to_embed(pos_grid: torch.Tensor, embed_dim: int,
-                            omega_0: float = 100.0) -> torch.Tensor:
+def _position_grid_to_embed(pos_grid: torch.Tensor, embed_dim: int, omega_0: float = 100.0) -> torch.Tensor:
     H, W, _ = pos_grid.shape
     pos_flat = pos_grid.reshape(-1, 2)
     emb_x = _make_sincos_pos_embed(embed_dim // 2, pos_flat[:, 0], omega_0=omega_0)
@@ -118,13 +103,10 @@ def _apply_activation(x: torch.Tensor, activation: str) -> torch.Tensor:
 
 
 class ResidualConvUnit(nn.Module):
-    def __init__(self, features: int,
-                 device=None, dtype=None, operations=None):
+    def __init__(self, features: int, device=None, dtype=None, operations=None):
         super().__init__()
-        self.conv1 = operations.Conv2d(features, features, 3, 1, 1, bias=True,
-                                       device=device, dtype=dtype)
-        self.conv2 = operations.Conv2d(features, features, 3, 1, 1, bias=True,
-                                       device=device, dtype=dtype)
+        self.conv1 = operations.Conv2d(features, features, 3, 1, 1, bias=True, device=device, dtype=dtype)
+        self.conv2 = operations.Conv2d(features, features, 3, 1, 1, bias=True, device=device, dtype=dtype)
         self.activation = nn.ReLU(inplace=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -136,9 +118,7 @@ class ResidualConvUnit(nn.Module):
 
 
 class FeatureFusionBlock(nn.Module):
-    def __init__(self, features: int, has_residual: bool = True,
-                 align_corners: bool = True,
-                 device=None, dtype=None, operations=None):
+    def __init__(self, features: int, has_residual: bool = True, align_corners: bool = True, device=None, dtype=None, operations=None):
         super().__init__()
         self.align_corners = align_corners
         self.has_residual = has_residual
@@ -147,8 +127,7 @@ class FeatureFusionBlock(nn.Module):
         else:
             self.resConfUnit1 = None
         self.resConfUnit2 = ResidualConvUnit(features, device=device, dtype=dtype, operations=operations)
-        self.out_conv = operations.Conv2d(features, features, 1, 1, 0, bias=True,
-                                          device=device, dtype=dtype)
+        self.out_conv = operations.Conv2d(features, features, 1, 1, 0, bias=True, device=device, dtype=dtype)
 
     def forward(self, *xs: torch.Tensor, size: Optional[Tuple[int, int]] = None) -> torch.Tensor:
         y = xs[0]
@@ -159,8 +138,7 @@ class FeatureFusionBlock(nn.Module):
             up_kwargs = {"scale_factor": 2.0}
         else:
             up_kwargs = {"size": size}
-        y = _custom_interpolate(y, **up_kwargs, mode="bilinear",
-                                align_corners=self.align_corners)
+        y = _custom_interpolate(y, **up_kwargs, mode="bilinear", align_corners=self.align_corners)
         y = self.out_conv(y)
         return y
 
@@ -169,25 +147,17 @@ class _Scratch(nn.Module):
     """Container that mirrors upstream ``scratch`` attribute layout."""
 
 
-def _make_scratch(in_shape: List[int], out_shape: int,
-                  device=None, dtype=None, operations=None) -> _Scratch:
+def _make_scratch(in_shape: List[int], out_shape: int, device=None, dtype=None, operations=None) -> _Scratch:
     scratch = _Scratch()
-    scratch.layer1_rn = operations.Conv2d(in_shape[0], out_shape, 3, 1, 1, bias=False,
-                                          device=device, dtype=dtype)
-    scratch.layer2_rn = operations.Conv2d(in_shape[1], out_shape, 3, 1, 1, bias=False,
-                                          device=device, dtype=dtype)
-    scratch.layer3_rn = operations.Conv2d(in_shape[2], out_shape, 3, 1, 1, bias=False,
-                                          device=device, dtype=dtype)
-    scratch.layer4_rn = operations.Conv2d(in_shape[3], out_shape, 3, 1, 1, bias=False,
-                                          device=device, dtype=dtype)
+    scratch.layer1_rn = operations.Conv2d(in_shape[0], out_shape, 3, 1, 1, bias=False, device=device, dtype=dtype)
+    scratch.layer2_rn = operations.Conv2d(in_shape[1], out_shape, 3, 1, 1, bias=False, device=device, dtype=dtype)
+    scratch.layer3_rn = operations.Conv2d(in_shape[2], out_shape, 3, 1, 1, bias=False, device=device, dtype=dtype)
+    scratch.layer4_rn = operations.Conv2d(in_shape[3], out_shape, 3, 1, 1, bias=False, device=device, dtype=dtype)
     return scratch
 
 
-def _make_fusion_block(features: int, has_residual: bool = True,
-                       device=None, dtype=None, operations=None) -> FeatureFusionBlock:
-    return FeatureFusionBlock(features, has_residual=has_residual,
-                              align_corners=True,
-                              device=device, dtype=dtype, operations=operations)
+def _make_fusion_block(features: int, has_residual: bool = True, device=None, dtype=None, operations=None) -> FeatureFusionBlock:
+    return FeatureFusionBlock(features, has_residual=has_residual, align_corners=True, device=device, dtype=dtype, operations=operations)
 
 
 # -----------------------------------------------------------------------------
@@ -237,27 +207,21 @@ class DPT(nn.Module):
 
         out_channels = list(out_channels)
         self.projects = nn.ModuleList([
-            operations.Conv2d(dim_in, oc, kernel_size=1, stride=1, padding=0,
-                              device=device, dtype=dtype)
+            operations.Conv2d(dim_in, oc, kernel_size=1, stride=1, padding=0, device=device, dtype=dtype)
             for oc in out_channels
         ])
         self.resize_layers = nn.ModuleList([
-            operations.ConvTranspose2d(out_channels[0], out_channels[0], kernel_size=4, stride=4, padding=0,
-                                       device=device, dtype=dtype),
-            operations.ConvTranspose2d(out_channels[1], out_channels[1], kernel_size=2, stride=2, padding=0,
-                                       device=device, dtype=dtype),
+            operations.ConvTranspose2d(out_channels[0], out_channels[0], kernel_size=4, stride=4, padding=0, device=device, dtype=dtype),
+            operations.ConvTranspose2d(out_channels[1], out_channels[1], kernel_size=2, stride=2, padding=0, device=device, dtype=dtype),
             nn.Identity(),
-            operations.Conv2d(out_channels[3], out_channels[3], kernel_size=3, stride=2, padding=1,
-                              device=device, dtype=dtype),
+            operations.Conv2d(out_channels[3], out_channels[3], kernel_size=3, stride=2, padding=1, device=device, dtype=dtype),
         ])
 
-        self.scratch = _make_scratch(out_channels, features,
-                                     device=device, dtype=dtype, operations=operations)
+        self.scratch = _make_scratch(out_channels, features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet1 = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet2 = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet3 = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
-        self.scratch.refinenet4 = _make_fusion_block(features, has_residual=False,
-                                                    device=device, dtype=dtype, operations=operations)
+        self.scratch.refinenet4 = _make_fusion_block(features, has_residual=False, device=device, dtype=dtype, operations=operations)
 
         head_features_1 = features
         head_features_2 = 32
@@ -266,24 +230,19 @@ class DPT(nn.Module):
             device=device, dtype=dtype,
         )
         self.scratch.output_conv2 = nn.Sequential(
-            operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1,
-                              device=device, dtype=dtype),
+            operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1, device=device, dtype=dtype),
             nn.ReLU(inplace=False),
-            operations.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0,
-                              device=device, dtype=dtype),
+            operations.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0, device=device, dtype=dtype),
         )
 
         if self.use_sky_head:
             self.scratch.sky_output_conv2 = nn.Sequential(
-                operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1,
-                                  device=device, dtype=dtype),
+                operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1, device=device, dtype=dtype),
                 nn.ReLU(inplace=False),
-                operations.Conv2d(head_features_2, 1, kernel_size=1, stride=1, padding=0,
-                                  device=device, dtype=dtype),
+                operations.Conv2d(head_features_2, 1, kernel_size=1, stride=1, padding=0, device=device, dtype=dtype),
             )
 
-    def forward(self, feats: List[torch.Tensor], H: int, W: int,
-                patch_start_idx: int = 0, **_kwargs) -> dict:
+    def forward(self, feats: List[torch.Tensor], H: int, W: int, patch_start_idx: int = 0, **_kwargs) -> dict:
         # feats[i][0] is the patch-token tensor with shape (B, S, N_patch, C)
         B, S, N, C = feats[0][0].shape
         feats_flat = [feat[0].reshape(B * S, N, C) for feat in feats]
@@ -350,14 +309,7 @@ class DPT(nn.Module):
 
 
 class DualDPT(nn.Module):
-    """Two-head DPT used by DA3-Small / DA3-Base.
-
-    The auxiliary "ray" head is constructed so that HF state-dict keys load
-    cleanly. It is only executed when :attr:`enable_aux` is set on the
-    instance (typically by ``DepthAnything3Net`` when running multi-view
-    with ``use_ray_pose=True``); otherwise the monocular path skips it for
-    speed and the auxiliary submodules sit idle.
-    """
+    """Two-head DPT used by DA3-Small / DA3-Base."""
 
     def __init__(
         self,
@@ -386,40 +338,33 @@ class DualDPT(nn.Module):
         self.head_main, self.head_aux = head_names
         self.intermediate_layer_idx: Tuple[int, int, int, int] = (0, 1, 2, 3)
         # Toggle the auxiliary ray branch at runtime. Default off (mono path).
-        # ``DepthAnything3Net`` flips this on when running multi-view + ray-pose.
+        # DepthAnything3Net flips this on when running multi-view + ray-pose.
         self.enable_aux: bool = False
 
         self.norm = operations.LayerNorm(dim_in, device=device, dtype=dtype)
         out_channels = list(out_channels)
         self.projects = nn.ModuleList([
-            operations.Conv2d(dim_in, oc, kernel_size=1, stride=1, padding=0,
-                              device=device, dtype=dtype)
+            operations.Conv2d(dim_in, oc, kernel_size=1, stride=1, padding=0, device=device, dtype=dtype)
             for oc in out_channels
         ])
         self.resize_layers = nn.ModuleList([
-            operations.ConvTranspose2d(out_channels[0], out_channels[0], kernel_size=4, stride=4, padding=0,
-                                       device=device, dtype=dtype),
-            operations.ConvTranspose2d(out_channels[1], out_channels[1], kernel_size=2, stride=2, padding=0,
-                                       device=device, dtype=dtype),
+            operations.ConvTranspose2d(out_channels[0], out_channels[0], kernel_size=4, stride=4, padding=0, device=device, dtype=dtype),
+            operations.ConvTranspose2d(out_channels[1], out_channels[1], kernel_size=2, stride=2, padding=0, device=device, dtype=dtype),
             nn.Identity(),
-            operations.Conv2d(out_channels[3], out_channels[3], kernel_size=3, stride=2, padding=1,
-                              device=device, dtype=dtype),
+            operations.Conv2d(out_channels[3], out_channels[3], kernel_size=3, stride=2, padding=1, device=device, dtype=dtype),
         ])
 
-        self.scratch = _make_scratch(out_channels, features,
-                                     device=device, dtype=dtype, operations=operations)
+        self.scratch = _make_scratch(out_channels, features, device=device, dtype=dtype, operations=operations)
         # Main fusion chain
         self.scratch.refinenet1 = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet2 = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet3 = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
-        self.scratch.refinenet4 = _make_fusion_block(features, has_residual=False,
-                                                    device=device, dtype=dtype, operations=operations)
+        self.scratch.refinenet4 = _make_fusion_block(features, has_residual=False, device=device, dtype=dtype, operations=operations)
         # Auxiliary fusion chain (separate copies)
         self.scratch.refinenet1_aux = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet2_aux = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
         self.scratch.refinenet3_aux = _make_fusion_block(features, device=device, dtype=dtype, operations=operations)
-        self.scratch.refinenet4_aux = _make_fusion_block(features, has_residual=False,
-                                                        device=device, dtype=dtype, operations=operations)
+        self.scratch.refinenet4_aux = _make_fusion_block(features, has_residual=False, device=device, dtype=dtype, operations=operations)
 
         head_features_1 = features
         head_features_2 = 32
@@ -430,11 +375,9 @@ class DualDPT(nn.Module):
             device=device, dtype=dtype,
         )
         self.scratch.output_conv2 = nn.Sequential(
-            operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1,
-                              device=device, dtype=dtype),
+            operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1, device=device, dtype=dtype),
             nn.ReLU(inplace=False),
-            operations.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0,
-                              device=device, dtype=dtype),
+            operations.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0, device=device, dtype=dtype),
         )
 
         # Aux pre-head per level (multi-level pyramid)
@@ -449,12 +392,10 @@ class DualDPT(nn.Module):
                   Permute((0, 3, 1, 2))]
         self.scratch.output_conv2_aux = nn.ModuleList([
             nn.Sequential(
-                operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1,
-                                  device=device, dtype=dtype),
+                operations.Conv2d(head_features_1 // 2, head_features_2, kernel_size=3, stride=1, padding=1, device=device, dtype=dtype),
                 *ln_seq,
                 nn.ReLU(inplace=False),
-                operations.Conv2d(head_features_2, 7, kernel_size=1, stride=1, padding=0,
-                                  device=device, dtype=dtype),
+                operations.Conv2d(head_features_2, 7, kernel_size=1, stride=1, padding=0, device=device, dtype=dtype),
             )
             for _ in range(self.aux_levels)
         ])
@@ -470,8 +411,7 @@ class DualDPT(nn.Module):
             operations.Conv2d(in_ch, in_ch // 2, 3, 1, 1, device=device, dtype=dtype),
         )
 
-    def forward(self, feats: List[torch.Tensor], H: int, W: int,
-                patch_start_idx: int = 0, **_kwargs) -> dict:
+    def forward(self, feats: List[torch.Tensor], H: int, W: int, patch_start_idx: int = 0, **_kwargs) -> dict:
         B, S, N, C = feats[0][0].shape
         feats_flat = [feat[0].reshape(B * S, N, C) for feat in feats]
 

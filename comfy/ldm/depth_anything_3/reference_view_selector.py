@@ -1,15 +1,4 @@
-"""Reference-view selection for the multi-view path of Depth Anything 3.
-
-Pure tensor math, no learned parameters. Exposed as three free functions:
-
-* :func:`select_reference_view`   -- pick a reference view per batch.
-* :func:`reorder_by_reference`    -- move the reference view to position 0.
-* :func:`restore_original_order`  -- inverse of :func:`reorder_by_reference`.
-
-Mirrors ``depth_anything_3.model.reference_view_selector`` upstream.
-The default strategy (``"saddle_balanced"``) selects the view whose CLS
-token features are closest to the median across multiple metrics.
-"""
+"""Reference-view selection for the multi-view path of Depth Anything 3."""
 
 from __future__ import annotations
 
@@ -26,22 +15,8 @@ RefViewStrategy = Literal["first", "middle", "saddle_balanced", "saddle_sim_rang
 THRESH_FOR_REF_SELECTION: int = 3
 
 
-def select_reference_view(
-    x: torch.Tensor,
-    strategy: RefViewStrategy = "saddle_balanced",
-) -> torch.Tensor:
-    """Pick a reference view index per batch element.
-
-    Args:
-        x: ``(B, S, N, C)`` token tensor. Index 0 along ``N`` is the
-            cls/cam token used by the feature-based strategies.
-        strategy: One of ``"first" | "middle" | "saddle_balanced" |
-            "saddle_sim_range"``.
-
-    Returns:
-        ``(B,)`` long tensor with the chosen reference view index for
-        each batch element.
-    """
+def select_reference_view(x: torch.Tensor, strategy: RefViewStrategy = "saddle_balanced") -> torch.Tensor:
+    """Pick a reference view index per batch element."""
     B, S, _, _ = x.shape
     if S <= 1:
         return torch.zeros(B, dtype=torch.long, device=x.device)
@@ -83,7 +58,7 @@ def select_reference_view(
 
 
 def reorder_by_reference(x: torch.Tensor, b_idx: torch.Tensor) -> torch.Tensor:
-    """Reorder ``x`` so the reference view is at position 0 in axis ``S``."""
+    """Reorder x so the reference view is at position 0 in axis S."""
     B, S = x.shape[0], x.shape[1]
     if S <= 1:
         return x
@@ -100,17 +75,13 @@ def reorder_by_reference(x: torch.Tensor, b_idx: torch.Tensor) -> torch.Tensor:
 
 
 def restore_original_order(x: torch.Tensor, b_idx: torch.Tensor) -> torch.Tensor:
-    """Inverse of :func:`reorder_by_reference`."""
+    """Inverse of reorder_by_reference."""
     B, S = x.shape[0], x.shape[1]
     if S <= 1:
         return x
     target_positions = torch.arange(S, device=x.device).unsqueeze(0).expand(B, -1)
     b_idx_exp = b_idx.unsqueeze(1)
-    restore = torch.where(target_positions < b_idx_exp,
-                          target_positions + 1,
-                          target_positions)
-    restore = torch.scatter(
-        restore, dim=1, index=b_idx_exp, src=torch.zeros_like(b_idx_exp),
-    )
+    restore = torch.where(target_positions < b_idx_exp, target_positions + 1, target_positions)
+    restore = torch.scatter(restore, dim=1, index=b_idx_exp, src=torch.zeros_like(b_idx_exp))
     batch = torch.arange(B, device=x.device).unsqueeze(1)
     return x[batch, restore]

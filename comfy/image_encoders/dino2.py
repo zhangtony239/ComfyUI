@@ -289,21 +289,6 @@ class Dino2Embeddings(torch.nn.Module):
 
 
 class Dinov2Model(torch.nn.Module):
-    """DINOv2 vision backbone.
-
-    Supports two operating modes:
-
-    * **CLIP-vision DINOv2** (default): vanilla DINOv2-ViT used for
-      ``ClipVisionModel`` and SigLIP-style image encoding.
-    * **Depth Anything 3** extensions (opt-in via config keys): 2D RoPE,
-      QK-norm, alternating local/global attention, camera-token injection,
-      ``cat_token`` output and multi-layer feature extraction. These are
-      enabled when the corresponding fields (``alt_start``, ``qknorm_start``,
-      ``rope_start``, ``cat_token``) are set in ``config_dict``. When all of
-      them are at their disabled defaults this module behaves identically to
-      the historical ``Dinov2Model``.
-    """
-
     def __init__(self, config_dict, dtype, device, operations):
         super().__init__()
         num_layers = config_dict["num_hidden_layers"]
@@ -363,21 +348,7 @@ class Dinov2Model(torch.nn.Module):
         return x, i, pooled_output, None
 
     def get_intermediate_layers(self, pixel_values, indices, apply_norm=True):
-        """Single-view multi-layer feature extraction (MoGe / vanilla DINOv2).
-
-        For the multi-view Depth Anything 3 path (RoPE, alt-attention,
-        camera-token injection, ref-view selection, cat_token), use
-        :meth:`get_intermediate_layers_da3` instead.
-
-        Args:
-            pixel_values: ``(B, 3, H, W)`` single-view input.
-            indices: layer indices to extract; supports negative indexing.
-            apply_norm: if True, apply the final layernorm to each output.
-
-        Returns:
-            list of ``(patch_tokens, cls_token)`` tuples with shapes
-            ``(B, N_patch, C)`` and ``(B, C)`` (one entry per ``indices``).
-        """
+        """Single-view multi-layer feature extraction."""
         x = self.embeddings(pixel_values)
         optimized_attention = optimized_attention_for_device(x.device, False, small_input=True)
         n_layers = len(self.encoder.layer)
@@ -413,8 +384,7 @@ class Dinov2Model(torch.nn.Module):
         pos_global = torch.cat([cls_pos, torch.zeros_like(pos) + 1], dim=1)
         return pos_local, pos_global
 
-    def _inject_camera_token(self, x: torch.Tensor, B: int, S: int,
-                             cam_token: "torch.Tensor | None") -> torch.Tensor:
+    def _inject_camera_token(self, x: torch.Tensor, B: int, S: int, cam_token: "torch.Tensor | None") -> torch.Tensor:
         # x: (B, S, N, C). Replace token at index 0 with the camera token.
         if cam_token is not None:
             inj = cam_token
@@ -427,40 +397,8 @@ class Dinov2Model(torch.nn.Module):
         x[:, :, 0] = inj
         return x
 
-    def get_intermediate_layers_da3(self, pixel_values, out_layers, cam_token=None,
-                                ref_view_strategy="saddle_balanced",
-                                export_feat_layers=None):
-        """Multi-view multi-layer feature extraction used by Depth Anything 3.
-
-        Adds RoPE positions, alternating local/global attention across views,
-        camera-token injection, reference-view selection/reordering,
-        ``cat_token`` output and optional auxiliary feature exports on top of
-        the vanilla DINOv2 path. For the single-view MoGe / CLIP-vision use
-        case, see :meth:`get_intermediate_layers`.
-
-        Args:
-            pixel_values: ``(B, S, 3, H, W)`` views or ``(B, 3, H, W)``.
-            out_layers: indices into ``self.encoder.layer``.
-            cam_token: optional ``(B, S, dim)`` camera token to inject at
-                ``alt_start``. If ``None`` and the model has its own
-                ``camera_token`` parameter, that is used.
-            ref_view_strategy: when ``S >= 3`` and ``cam_token is None``,
-                pick a reference view via this strategy and move it to
-                position 0 right before the first alt-attention block.
-                The original view order is restored on the way out.
-            export_feat_layers: optional iterable of layer indices whose
-                local attention outputs to also return as auxiliary
-                features (``(B, S, N_patch, C)`` after final norm). Used
-                by the multi-view path to expose intermediate features
-                to the nested-architecture wrapper.
-
-        Returns:
-            ``(layer_outputs, aux_outputs)`` where ``layer_outputs`` is a
-            list of ``(patch_tokens, cls_or_cam_token)`` tuples (one per
-            ``out_layers`` entry) and ``aux_outputs`` is a list of
-            ``(B, S, N_patch, C)`` features for ``export_feat_layers``
-            (empty list when not requested).
-        """
+    def get_intermediate_layers_da3(self, pixel_values, out_layers, cam_token=None, ref_view_strategy="saddle_balanced", export_feat_layers=None):
+        """Multi-view multi-layer feature extraction used by Depth Anything 3."""
         if pixel_values.ndim == 4:
             pixel_values = pixel_values.unsqueeze(1)
         assert pixel_values.ndim == 5 and pixel_values.shape[2] == 3, \
@@ -473,7 +411,7 @@ class Dinov2Model(torch.nn.Module):
         x = x.reshape(B, S, x.shape[-2], x.shape[-1])    # (B, S, 1+N, C)
 
         pos_local, pos_global = self._prepare_rope_positions(B, S, H, W, x.device)
-        # ``optimized_attention`` is only used by blocks without QK-norm/RoPE
+        # optimized_attention is only used by blocks without QK-norm/RoPE
         # (vanilla DINOv2 path); enabling-aware blocks fall through to SDPA.
         optimized_attention = optimized_attention_for_device(x.device, False, small_input=True)
 
@@ -492,10 +430,9 @@ class Dinov2Model(torch.nn.Module):
             g_pos = pos_global if apply_rope else None
 
             # Reference-view selection threshold: matches the upstream constant
-            # ``THRESH_FOR_REF_SELECTION = 3``. Skipped when a user-supplied
+            # THRESH_FOR_REF_SELECTION = 3. Skipped when a user-supplied
             # cam_token is provided (camera info already pins the geometry).
-            if (self.alt_start != -1 and i == self.alt_start - 1
-                    and S >= THRESH_FOR_REF_SELECTION and cam_token is None):
+            if (self.alt_start != -1 and i == self.alt_start - 1 and S >= THRESH_FOR_REF_SELECTION and cam_token is None):
                 b_idx = select_reference_view(x, strategy=ref_view_strategy)
                 x = reorder_by_reference(x, b_idx)
                 local_x = reorder_by_reference(local_x, b_idx)
@@ -534,7 +471,7 @@ class Dinov2Model(torch.nn.Module):
                     aux = restore_original_order(aux, b_idx)
                 aux_outputs.append(aux)
 
-        # Apply final norm. When ``cat_token`` is set, only the right half
+        # Apply final norm. When cat_token is set, only the right half
         # ("global" features) is normalised; the left half is left as-is to
         # match the upstream DA3 head signature.
         normed: list[torch.Tensor] = []

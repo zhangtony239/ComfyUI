@@ -1,11 +1,4 @@
-"""Geometry / camera transform helpers for Depth Anything 3.
-
-Pure tensor math, no learned parameters. Mirrors the upstream upstream
-``depth_anything_3.model.utils.transform`` and the parts of
-``depth_anything_3.utils.geometry`` used at inference time on the
-multi-view + camera path. Kept self-contained so the DA3 module is fully
-ported and does not depend on the upstream repo at runtime.
-"""
+"""Geometry / camera transform helpers for Depth Anything 3."""
 
 from __future__ import annotations
 
@@ -21,10 +14,7 @@ import torch.nn.functional as F
 
 
 def as_homogeneous(ext: torch.Tensor) -> torch.Tensor:
-    """Promote ``(...,3,4)`` extrinsics to ``(...,4,4)`` homogeneous form.
-
-    A no-op when the input is already ``(...,4,4)``.
-    """
+    """Promote (...,3,4) extrinsics to (...,4,4) homogeneous form. No-op when the input is already ``(...,4,4)``."""
     if ext.shape[-2:] == (4, 4):
         return ext
     if ext.shape[-2:] == (3, 4):
@@ -48,7 +38,7 @@ def affine_inverse(A: torch.Tensor) -> torch.Tensor:
 
 
 def _sqrt_positive_part(x: torch.Tensor) -> torch.Tensor:
-    """``sqrt(max(0, x))`` with a zero subgradient where ``x == 0``."""
+    """sqrt(max(0, x)) with a zero subgradient where x == 0."""
     ret = torch.zeros_like(x)
     positive_mask = x > 0
     if torch.is_grad_enabled():
@@ -64,7 +54,7 @@ def standardize_quaternion(quaternions: torch.Tensor) -> torch.Tensor:
 
 
 def quat_to_mat(quaternions: torch.Tensor) -> torch.Tensor:
-    """Convert quaternions (xyzw) to ``(...,3,3)`` rotation matrices."""
+    """Convert quaternions (xyzw) to (...,3,3) rotation matrices."""
     i, j, k, r = torch.unbind(quaternions, -1)
     two_s = 2.0 / (quaternions * quaternions).sum(-1)
     o = torch.stack(
@@ -85,7 +75,7 @@ def quat_to_mat(quaternions: torch.Tensor) -> torch.Tensor:
 
 
 def mat_to_quat(matrix: torch.Tensor) -> torch.Tensor:
-    """Convert ``(...,3,3)`` rotation matrices to quaternions (xyzw)."""
+    """Convert (...,3,3) rotation matrices to quaternions (xyzw)."""
     if matrix.size(-1) != 3 or matrix.size(-2) != 3:
         raise ValueError(f"Invalid rotation matrix shape {matrix.shape}.")
 
@@ -132,16 +122,11 @@ def mat_to_quat(matrix: torch.Tensor) -> torch.Tensor:
 # -----------------------------------------------------------------------------
 
 
-def extri_intri_to_pose_encoding(
-    extrinsics: torch.Tensor,
-    intrinsics: torch.Tensor,
-    image_size_hw: Tuple[int, int],
-) -> torch.Tensor:
-    """Pack ``(extr, intr, image_size)`` into the 9-D pose-encoding vector.
-
-    ``extrinsics`` are camera-to-world (c2w) ``(B,S,4,4)`` matrices,
-    ``intrinsics`` are pixel-space ``(B,S,3,3)`` matrices, ``image_size_hw``
-    is a ``(H, W)`` pair. The encoding is ``[T(3), quat_xyzw(4), fov_h, fov_w]``.
+def extri_intri_to_pose_encoding(extrinsics: torch.Tensor, intrinsics: torch.Tensor, image_size_hw: Tuple[int, int]) -> torch.Tensor:
+    """Pack (extr, intr, image_size) into the 9-D pose-encoding vector.
+    extrinsics: camera-to-world (c2w) (B,S,4,4) matrices,
+    intrinsics: pixel-space (B,S,3,3) matrices,
+    image_size_hw: is a (H, W) pair.
     """
     R = extrinsics[..., :3, :3]
     T = extrinsics[..., :3, 3]
@@ -152,15 +137,8 @@ def extri_intri_to_pose_encoding(
     return torch.cat([T, quat, fov_h[..., None], fov_w[..., None]], dim=-1).float()
 
 
-def pose_encoding_to_extri_intri(
-    pose_encoding: torch.Tensor,
-    image_size_hw: Tuple[int, int],
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Inverse of :func:`extri_intri_to_pose_encoding`.
-
-    Returns a ``(B,S,3,4)`` c2w extrinsic matrix and a ``(B,S,3,3)``
-    pixel-space intrinsic matrix.
-    """
+def pose_encoding_to_extri_intri(pose_encoding: torch.Tensor, image_size_hw: Tuple[int, int]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Inverse of extri_intri_to_pose_encoding."""
     T = pose_encoding[..., :3]
     quat = pose_encoding[..., 3:7]
     fov_h = pose_encoding[..., 7]
@@ -173,8 +151,7 @@ def pose_encoding_to_extri_intri(
     H, W = image_size_hw
     fy = (H / 2.0) / torch.clamp(torch.tan(fov_h / 2.0), 1e-6)
     fx = (W / 2.0) / torch.clamp(torch.tan(fov_w / 2.0), 1e-6)
-    intrinsics = torch.zeros(pose_encoding.shape[:2] + (3, 3),
-                             device=pose_encoding.device, dtype=pose_encoding.dtype)
+    intrinsics = torch.zeros(pose_encoding.shape[:2] + (3, 3), device=pose_encoding.device, dtype=pose_encoding.dtype)
     intrinsics[..., 0, 0] = fx
     intrinsics[..., 1, 1] = fy
     intrinsics[..., 0, 2] = W / 2

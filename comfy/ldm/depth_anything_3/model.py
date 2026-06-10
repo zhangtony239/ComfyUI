@@ -1,27 +1,3 @@
-# DepthAnything3Net: top-level wrapper that combines backbone + head.
-#
-# Supports both the monocular and the multi-view + camera path:
-#
-# * Monocular: ``S = 1``, no camera encoder/decoder. Mirrors the original
-#   port that only handled ``DA3-MONO/METRIC-LARGE`` and the auxiliary-disabled
-#   ``DA3-SMALL/BASE`` configs.
-# * Multi-view + camera: ``S > 1``. ``cam_enc`` (optional) maps user-supplied
-#   extrinsics + intrinsics into a per-view camera token; ``cam_dec`` decodes
-#   the final layer's camera token into a 9-D pose encoding. When the
-#   auxiliary "ray" head of ``DualDPT`` is enabled the predicted ray map can
-#   alternatively be used to estimate pose via RANSAC (``use_ray_pose=True``).
-#   The 3D-Gaussian head and the nested-architecture wrapper are intentionally
-#   left out of scope here; their state-dict keys (``gs_head.*``,
-#   ``gs_adapter.*``) are dropped when repackaging the checkpoint with
-#   ``scripts/convert_da3.py``, which also remaps the backbone into the native
-#   ``Dinov2Model`` layout that this module loads directly.
-#
-# The backbone is shared with the CLIP-vision DINOv2 path
-# (``comfy.image_encoders.dino2.Dinov2Model``); the DA3-specific extensions
-# (RoPE, QK-norm, alternating local/global attention, camera token, multi-
-# layer feature extraction, reference-view reordering) are opt-in via the
-# config dict and are all disabled for the Mono/Metric variants.
-
 from __future__ import annotations
 
 from typing import Dict, Optional, Sequence
@@ -79,13 +55,6 @@ def _build_backbone_config(
 
 
 class DepthAnything3Net(nn.Module):
-    """ComfyUI-side DepthAnything3 network.
-
-    Parameters mirror the variant YAML configs from the upstream repo and
-    are auto-detected from the state dict by ``comfy/model_detection.py``.
-    The kwargs ``device``, ``dtype`` and ``operations`` are injected by
-    ``BaseModel``.
-    """
 
     PATCH_SIZE = 14
 
@@ -99,17 +68,17 @@ class DepthAnything3Net(nn.Module):
         rope_start: int = -1,
         cat_token: bool = False,
         # --- Head ---
-        head_type: str = "dpt",                # "dpt" or "dualdpt"
+        head_type: str = "dpt",  # dpt or dualdpt
         head_dim_in: int = 1024,
-        head_output_dim: int = 1,              # 1 = depth only, 2 = depth+conf
+        head_output_dim: int = 1,  # 1 = depth only, 2 = depth+conf
         head_features: int = 256,
         head_out_channels: Sequence[int] = (256, 512, 1024, 1024),
-        head_use_sky_head: bool = True,        # ignored by DualDPT
-        head_pos_embed: Optional[bool] = None, # default: True for DualDPT, False for DPT
+        head_use_sky_head: bool = True, # ignored by DualDPT
+        head_pos_embed: Optional[bool] = None,  # default: True for DualDPT, False for DPT
         # --- Camera (multi-view) ---
         has_cam_enc: bool = False,
         has_cam_dec: bool = False,
-        cam_dim_out: Optional[int] = None,     # CameraEnc dim_out (defaults to embed_dim)
+        cam_dim_out: Optional[int] = None,  # CameraEnc dim_out (defaults to embed_dim)
         cam_dec_dim_in: Optional[int] = None,  # CameraDec dim_in  (defaults to 2*embed_dim with cat_token)
         # ComfyUI plumbing
         device=None, dtype=None, operations=None,
@@ -182,42 +151,7 @@ class DepthAnything3Net(nn.Module):
         export_feat_layers: Optional[Sequence[int]] = None,
         **_unused,
     ) -> Dict[str, torch.Tensor]:
-        """Run depth (and optionally pose) prediction.
-
-        Args:
-            image: ``(B, 3, H, W)`` ImageNet-normalised image tensor, or
-                   ``(B, S, 3, H, W)`` for multi-view inputs. ``H`` and ``W``
-                   must be multiples of 14.
-            extrinsics: optional ``(B, S, 4, 4)`` world-to-camera extrinsics.
-                When provided together with ``intrinsics``, ``CameraEnc``
-                converts them into per-view camera tokens that the backbone
-                injects at block ``alt_start``.
-            intrinsics: optional ``(B, S, 3, 3)`` pixel-space intrinsics.
-            use_ray_pose: if True, predict pose from the auxiliary "ray" head
-                (RANSAC over per-pixel rays). Only available on DualDPT
-                variants. If False (default) and ``cam_dec`` is present,
-                the final-layer cam token is decoded into pose instead.
-            ref_view_strategy: reference-view selection strategy used when
-                ``S >= 3`` and no extrinsics are supplied. See
-                :mod:`comfy.ldm.depth_anything_3.reference_view_selector`.
-            export_feat_layers: optional list of backbone layer indices whose
-                local features to also return as auxiliary outputs (used by
-                downstream nested-architecture wrappers; empty by default).
-
-        Returns:
-            Dict with a subset of:
-              - ``depth``       ``(B*S, H, W)`` raw depth values.
-              - ``depth_conf``  ``(B*S, H, W)`` confidence (DualDPT only).
-              - ``sky``         ``(B*S, H, W)`` sky probability (DPT + sky head).
-              - ``ray``         ``(B, S, h, w, 6)`` per-pixel cam ray (DualDPT,
-                                 multi-view, ``use_ray_pose=True`` only).
-              - ``ray_conf``    ``(B, S, h, w)`` ray confidence.
-              - ``extrinsics``  ``(B, S, 4, 4)`` world-to-cam, when pose
-                                 prediction is active.
-              - ``intrinsics``  ``(B, S, 3, 3)`` pixel-space intrinsics.
-              - ``aux_features`` list of ``(B, S, h_p, w_p, C)`` features
-                                 when ``export_feat_layers`` is non-empty.
-        """
+        """Run depth and optionally pose prediction."""
         if image.ndim == 4:
             image = image.unsqueeze(1)  # (B, 1, 3, H, W)
         assert image.ndim == 5 and image.shape[2] == 3, \
@@ -292,7 +226,7 @@ class DepthAnything3Net(nn.Module):
         return out
 
     def _reshape_aux_features(self, aux_feats, H: int, W: int):
-        """Reshape ``(B, S, N, C)`` aux features into ``(B, S, h_p, w_p, C)``."""
+        """Reshape (B, S, N, C) aux features into (B, S, h_p, w_p, C)."""
         ph, pw = H // self.PATCH_SIZE, W // self.PATCH_SIZE
         out = []
         for f in aux_feats:

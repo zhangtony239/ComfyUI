@@ -1,12 +1,11 @@
 """ComfyUI nodes for Depth Anything 3.
+Model capability matrix:
 
-Model capability matrix
------------------------
-  Variant               head_type  has_sky  has_conf  cam_dec
-  DA3-Small             dualdpt    False    True      yes
-  DA3-Base              dualdpt    False    True      yes
-  DA3-Mono-Large        dpt        True     False     no
-  DA3-Metric-Large      dpt        True     False     no  (raw output is metres)
+Variant               head_type  has_sky  has_conf  cam_dec
+DA3-Small             dualdpt    False    True      yes
+DA3-Base              dualdpt    False    True      yes
+DA3-Mono-Large        dpt        True     False     no
+DA3-Metric-Large      dpt        True     False     no  (raw output is metres)
 """
 
 from __future__ import annotations
@@ -90,15 +89,7 @@ def _da3_get_extrinsic(geometry: dict, b: int) -> torch.Tensor | None:
 
 
 def _da3_apply_extrinsic(points_cam: torch.Tensor, E: torch.Tensor) -> torch.Tensor:
-    """Transform (H,W,3) OpenCV camera-space points to world space.
-
-    E is the world-to-camera SE(3) matrix (3×4 or 4×4). The camera-to-world
-    inverse is computed analytically as [Rᵀ | −Rᵀt] rather than via
-    torch.linalg.inv to avoid numerical failures on near-degenerate poses.
-
-    Returns the original camera-space points unchanged if E contains non-finite
-    values (failed pose estimation), so the node can still produce a mesh.
-    """
+    """Transform (H,W,3) OpenCV camera-space points to world space."""
     E = E.to(points_cam.device).float()
     if not torch.isfinite(E).all():
         logging.getLogger("comfy").warning(
@@ -117,11 +108,7 @@ def _da3_apply_extrinsic(points_cam: torch.Tensor, E: torch.Tensor) -> torch.Ten
 
 
 def _normalize_confidence(conf: torch.Tensor) -> torch.Tensor:
-    """Map raw confidence (exp(x)+1 activation, range [1, ∞)) to [0, 1] per image.
-
-    Min-max per image preserves the spatial pattern while producing a [0, 1]
-    value suitable for both display and masking.
-    """
+    """Map raw confidence to [0, 1] per image."""
     B = conf.shape[0]
     out = []
     for i in range(B):
@@ -131,8 +118,7 @@ def _normalize_confidence(conf: torch.Tensor) -> torch.Tensor:
     return torch.stack(out, dim=0)
 
 
-def _da3_build_mask(geometry: dict, b: int, H: int, W: int,
-                    confidence_threshold: float, use_sky_mask: bool) -> torch.Tensor:
+def _da3_build_mask(geometry: dict, b: int, H: int, W: int, confidence_threshold: float, use_sky_mask: bool) -> torch.Tensor:
     """Build (H,W) bool keep-mask from sky probability and confidence."""
     mask = torch.ones(H, W, dtype=torch.bool)
     if use_sky_mask and "sky" in geometry:
@@ -179,11 +165,9 @@ class LoadDA3Model(io.ComfyNode):
         return io.NodeOutput(model)
 
 
-def _run_da3(model_patcher, image: torch.Tensor, process_res: int,
-             method: str = "upper_bound_resize"):
-    """Run DA3 on ``(B,H,W,3)`` IMAGE; returns depth/conf/sky at original resolution (or None)."""
-    assert image.ndim == 4 and image.shape[-1] == 3, \
-        f"expected (B,H,W,3) IMAGE; got {tuple(image.shape)}"
+def _run_da3(model_patcher, image: torch.Tensor, process_res: int, method: str = "upper_bound_resize"):
+    """Run DA3 on (B,H,W,3), returns depth/conf/sky at original resolution (or None)."""
+    assert image.ndim == 4 and image.shape[-1] == 3, f"expected (B,H,W,3) IMAGE; got {tuple(image.shape)}"
 
     B, H, W, _ = image.shape
     mm.load_model_gpu(model_patcher)
@@ -236,56 +220,46 @@ class DA3Inference(io.ComfyNode):
             description="Run Depth Anything 3 on an image. In multi-view mode each image is treated as a separate view of the same scene.",
             inputs=[
                 DA3ModelType.Input("da3_model"),
-                io.Image.Input("image",
-                               tooltip="In multi-view mode each image is treated as "
-                                       "a separate view of the same scene."),
-                io.Int.Input("process_res", default=504, min=140, max=2520, step=14,
-                             tooltip="Resolution the model runs at (longest side, multiple of 14). "
-                                     "Lower = faster / less VRAM; higher = more detail. "
-                                     "Output is upsampled back to the original size."),
-                io.Combo.Input("resize_method",
-                               options=["upper_bound_resize", "lower_bound_resize"],
-                               default="upper_bound_resize",
-                               tooltip="- upper_bound_resize: scale so the longest side = process_res (caps memory, default).\n"
-                                       "- lower_bound_resize: scale so the shortest side = process_res (preserves more detail on tall/wide images, uses more memory)."),
-                io.DynamicCombo.Input("mode",
-                                      tooltip="- mono: single view image - works with any model variant.\n"
-                                              "- multiview: all images processed together for geometric consistency + camera pose, for Small/Base models only.",
-                                      options=[
-                    io.DynamicCombo.Option("mono", []),
-                    io.DynamicCombo.Option("multiview", [
-                        io.Combo.Input("ref_view_strategy",
-                                       options=["saddle_balanced", "saddle_sim_range",
-                                                "first", "middle"],
-                                       default="saddle_balanced",
-                                               tooltip="Which view acts as the geometric anchor (only when S >= 3 and no extrinsics provided).\n"
-                                               "- saddle_balanced: the view most 'average' across all others - best general choice.\n"
-                                               "- saddle_sim_range: the view most visually distinct from the others.\n"
-                                               "- first / middle: fixed positional picks."),
-                        io.Combo.Input("pose_method",
-                                       options=["cam_dec", "ray_pose"],
-                                       default="cam_dec",
-                                               tooltip="How the camera field-of-view is estimated (for Small/Base models only).\n"
-                                               "- cam_dec: learned from image features.\n"
-                                               "- ray_pose: derived geometrically from the model's 3-D ray output.\n"
-                                               "Affects perspective correctness of the 3-D output. Try both if results look distorted."),
+                io.Image.Input("image"),
+                io.Int.Input("resolution", default=504, min=140, max=2520, step=14,
+                    tooltip="Resolution the model runs at (longest side, multiple of 14).\n"
+                        "Lower = faster / less VRAM.\n"
+                        "Higher = more detail.\n"
+                        "Output is upsampled back to the original size."),
+                io.Combo.Input("resize_method", options=["upper_bound_resize", "lower_bound_resize"], default="upper_bound_resize",
+                    tooltip="upper_bound_resize: scale so the longest side = resolution (caps memory, default).\n"
+                        "lower_bound_resize: scale so the shortest side = resolution (preserves more detail on tall/wide images, uses more memory)."),
+                io.DynamicCombo.Input("mode", tooltip="mono: single view image (works with any model variant).\n"
+                    "multiview: all images processed together for geometric consistency + camera pose (for Small/Base models only).",
+                    options=[
+                        io.DynamicCombo.Option("mono", []),
+                        io.DynamicCombo.Option("multiview", [
+                        io.Combo.Input("ref_view_strategy", options=["saddle_balanced", "saddle_sim_range", "first", "middle"], default="saddle_balanced",
+                            tooltip="Which view acts as the geometric anchor.\n"
+                                "- saddle_balanced: the view most 'average' across all others (best general choice).\n"
+                                "- saddle_sim_range: the view most visually distinct from the others.\n"
+                                "- first / middle: fixed positional picks."),
+                        io.Combo.Input("pose_method", options=["cam_dec", "ray_pose"], default="cam_dec",
+                            tooltip="How the camera field-of-view is estimated (for Small/Base models only).\n"
+                                "- cam_dec: learned from image features.\n"
+                                "- ray_pose: derived geometrically from the model's 3D ray output.\n"
+                                "Affects perspective correctness of the 3D output. Try both if results look distorted."),
                     ]),
                 ]),
             ],
             outputs=[
-                DA3Geometry.Output("da3_geometry",
-                                   tooltip="Dictionary of non-normalized tensors.\n"
-                                           "- Always: 'depth', 'image', 'mode'.\n"
-                                           "- Optional: 'sky' (Mono/Metric), 'confidence' (Small/Base), 'extrinsics' + 'intrinsics' (multi-view)."),
+                DA3Geometry.Output("da3_geometry", tooltip="Dictionary of non-normalized tensors.\n"
+                    "Always has the keys: depth, image, mode.\n"
+                    "Optional keys: sky (for Mono/Metric), confidence (for Small/Base), extrinsics + intrinsics (for multi-view)."),
             ],
         )
 
     @classmethod
-    def execute(cls, da3_model, image, process_res, resize_method, mode) -> io.NodeOutput:
+    def execute(cls, da3_model, image, resolution, resize_method, mode) -> io.NodeOutput:
         mode_val = mode["mode"]  # "mono" or "multiview"
 
         if mode_val == "mono":
-            return cls._execute_mono(da3_model, image, process_res, resize_method)
+            return cls._execute_mono(da3_model, image, resolution, resize_method)
 
         # Capability checks for multi-view mode.
         diffusion = da3_model.model.diffusion_model
@@ -317,13 +291,13 @@ class DA3Inference(io.ComfyNode):
             )
 
         return cls._execute_multiview(
-            da3_model, image, process_res, resize_method,
+            da3_model, image, resolution, resize_method,
             ref_view_strategy, pose_method,
         )
 
     @classmethod
-    def _execute_mono(cls, model, image, process_res, resize_method) -> io.NodeOutput:
-        depth, confidence, sky = _run_da3(model, image, process_res, method=resize_method)
+    def _execute_mono(cls, model, image, resolution, resize_method) -> io.NodeOutput:
+        depth, confidence, sky = _run_da3(model, image, resolution, method=resize_method)
 
         geometry: dict = {
             "depth": depth.contiguous(),
@@ -337,8 +311,7 @@ class DA3Inference(io.ComfyNode):
         return io.NodeOutput(geometry)
 
     @classmethod
-    def _execute_multiview(cls, model, image, process_res, resize_method,
-                           ref_view_strategy, pose_method) -> io.NodeOutput:
+    def _execute_multiview(cls, model, image, resolution, resize_method, ref_view_strategy, pose_method) -> io.NodeOutput:
         assert image.ndim == 4 and image.shape[-1] == 3, \
             f"expected (B,H,W,3) IMAGE; got {tuple(image.shape)}"
         S, H, W, _ = image.shape
@@ -350,13 +323,12 @@ class DA3Inference(io.ComfyNode):
 
         # All views in a single forward pass: (1, S, 3, H', W').
         x = image.to(device)
-        x = da3_preprocess.preprocess_image(x, process_res=process_res, method=resize_method)
+        x = da3_preprocess.preprocess_image(x, process_res=resolution, method=resize_method)
         x = x.to(dtype=dtype).unsqueeze(0)
 
         use_ray_pose = (pose_method == "ray_pose")
         with torch.no_grad():
-            out = diffusion(x, use_ray_pose=use_ray_pose,
-                            ref_view_strategy=ref_view_strategy)
+            out = diffusion(x, use_ray_pose=use_ray_pose, ref_view_strategy=ref_view_strategy)
 
         depth = torch.nn.functional.interpolate(
             out["depth"].float().unsqueeze(1), size=(H, W),
@@ -395,22 +367,19 @@ class DA3Inference(io.ComfyNode):
         return io.NodeOutput(geometry)
 
 
-
-
 class DA3Render(io.ComfyNode):
     """Render a visualization from a DA3_GEOMETRY packet."""
 
     _DEPTH_RENDER_INPUTS = [
         io.Combo.Input("normalization",
-                    options=["v2_style", "min_max", "raw"],
-                    default="v2_style",
-                    tooltip="- v2_style: mean/std normalisation for perceptually balanced results (default).\n"
-                            "- min_max: stretches the full depth range to [0, 1] for maximum contrast.\n"
-                            "- raw: no scaling - preserves metric units for Metric model."),
+            options=["v2_style", "min_max", "raw"],
+            default="v2_style",
+            tooltip="- v2_style: mean/std normalisation for perceptually balanced results (default).\n"
+                "- min_max: stretches the full depth range to [0, 1] for maximum contrast.\n"
+                "- raw: no scaling,preserves metric units for Metric model."),
         io.Boolean.Input("apply_sky_clip", default=False,
-                        tooltip="Clip sky-region depth to the 99th percentile of foreground depth before "
-                                "normalisation. Requires a 'sky' tensor in the da3_geometry input"
-                                "provided by Mono/Metric models; raises an error otherwise."),
+            tooltip="Clip sky-region depth to the 99th percentile of foreground depth before normalisation. "
+                "Requires a sky key in the da3_geometry input (for Mono/Metric models only)."),
     ]
 
     @classmethod
@@ -419,24 +388,22 @@ class DA3Render(io.ComfyNode):
             node_id="DA3Render",
             display_name="Render Depth Anything 3",
             category="image/geometry estimation",
-            description="Render a depth map, confidence map, or sky mask from DA3 geometry data.",
+            description="Render a depth map, confidence map, or sky mask from Depth Anything 3 geometry data.",
             inputs=[
                 DA3Geometry.Input("da3_geometry"),
                 io.DynamicCombo.Input("output",
-                                      tooltip="- depth: normalised greyscale depth image.\n"
-                                              "- depth_colored: depth mapped through the Turbo colormap.\n"
-                                              "- sky_mask: sky probability in [0, 1] (for Mono/Metric models only).\n"
-                                              "- confidence: normalised depth confidence (for Small/Base models only).",
-                                      options=[
+                    tooltip="- depth: normalised greyscale depth image.\n"
+                        "- depth_colored: depth mapped through the Turbo colormap.\n"
+                        "- sky_mask: sky probability in [0, 1] (for Mono/Metric models only).\n"
+                        "- confidence: normalised depth confidence (for Small/Base models only).",
+                options=[
                     io.DynamicCombo.Option("depth", cls._DEPTH_RENDER_INPUTS),
                     io.DynamicCombo.Option("depth_colored", cls._DEPTH_RENDER_INPUTS),
                     io.DynamicCombo.Option("sky_mask", [
-                        io.Boolean.Input("colored", default=False,
-                                         tooltip="Apply the Turbo colormap to the sky mask."),
+                        io.Boolean.Input("colored", default=False, tooltip="Apply the Turbo colormap to the sky mask."),
                     ]),
                     io.DynamicCombo.Option("confidence", [
-                        io.Boolean.Input("colored", default=False,
-                                         tooltip="Apply the Turbo colormap to the confidence map."),
+                        io.Boolean.Input("colored", default=False, tooltip="Apply the Turbo colormap to the confidence map."),
                     ]),
                 ]),
             ],
@@ -489,9 +456,9 @@ class DA3Render(io.ComfyNode):
         return io.NodeOutput(result.float())
 
     @staticmethod
-    def _depth_to_image(depth: torch.Tensor, sky_for_norm: torch.Tensor | None,
-                        normalization: str) -> torch.Tensor:
+    def _depth_to_image(depth: torch.Tensor, sky_for_norm: torch.Tensor | None, normalization: str) -> torch.Tensor:
         """Normalise depth and pack as an (B,H,W,3) image tensor."""
+
         N = depth.shape[0]
         if normalization == "v2_style":
             norm = torch.stack([
@@ -510,8 +477,6 @@ class DA3Render(io.ComfyNode):
         return out.contiguous()
 
 
-
-
 class DA3GeometryToMesh(io.ComfyNode):
     """Convert a DA3_GEOMETRY packet into a Types.MESH by unprojecting depth and triangulating."""
 
@@ -525,28 +490,20 @@ class DA3GeometryToMesh(io.ComfyNode):
             description="Convert a depth map into a triangulated 3D mesh.",
             inputs=[
                 DA3Geometry.Input("da3_geometry"),
-                io.Int.Input("batch_index", default=0, min=0, max=4096,
-                             tooltip="Which image of a batch to convert. "
-                                     "Per-image vertex counts differ so batches cannot be stacked."),
-                io.Int.Input("decimation", default=1, min=1, max=8,
-                             tooltip="Vertex stride; 1 = full resolution, 2 = half, etc."),
-                io.Float.Input("discontinuity_threshold", default=0.04, min=0.0, max=1.0, step=0.01,
-                               tooltip="Drop triangles whose 3×3 depth span exceeds this fraction. 0 = off."),
+                io.Int.Input("batch_index", default=0, min=0, max=4096, tooltip="Which image of a batch to convert. Per-image vertex counts differ so batches cannot be stacked."),
+                io.Int.Input("decimation", default=1, min=1, max=8, tooltip="Vertex stride. 1 = full resolution, 2 = half, etc."),
+                io.Float.Input("discontinuity_threshold", default=0.04, min=0.0, max=1.0, step=0.01, tooltip="Drop triangles whose 3x3 depth span exceeds this fraction. 0 = off."),
                 io.Float.Input("confidence_threshold", default=0.1, min=0.0, max=1.0, step=0.01,
-                               tooltip="Exclude pixels whose per-image normalised confidence is below this value (0 = keep all, 1 = keep only the single most confident pixel). "
-                                       "Used when the geometry has confidence map (Small/Base models)."),
-                io.Boolean.Input("use_sky_mask", default=True,
-                                 tooltip="Exclude sky-probability pixels (sky >= 0.5) from the mesh. "
-                                         "Used when the geometry has sky map (Mono/Metric models)."),
-                io.Boolean.Input("texture", default=True,
-                                 tooltip="Use the source image as a base color texture."),
+                    tooltip="Exclude pixels whose per-image normalised confidence is below this value (0 = keep all, 1 = keep only the single most confident pixel). "
+                        "Used when the geometry has a confidence map (Small/Base models)."),
+                io.Boolean.Input("use_sky_mask", default=True, tooltip="Exclude sky-probability pixels (sky >= 0.5) from the mesh. Used when the geometry has a sky map (Mono/Metric models)."),
+                io.Boolean.Input("texture", default=True, tooltip="Use the source image as a base color texture."),
             ],
             outputs=[io.Mesh.Output()],
         )
 
     @classmethod
-    def execute(cls, da3_geometry, batch_index, decimation, discontinuity_threshold,
-                confidence_threshold, use_sky_mask, texture) -> io.NodeOutput:
+    def execute(cls, da3_geometry, batch_index, decimation, discontinuity_threshold, confidence_threshold, use_sky_mask, texture) -> io.NodeOutput:
         depth_all = da3_geometry["depth"]   # (B, H, W)
         B = depth_all.shape[0]
         if batch_index >= B:
@@ -627,25 +584,20 @@ class DA3GeometryToPointCloud(io.ComfyNode):
             description="Convert a depth map into a 3D point cloud.",
             inputs=[
                 DA3Geometry.Input("da3_geometry"),
-                io.Int.Input("batch_index", default=0, min=0, max=4096,
-                             tooltip="Which image of a batch to convert."),
+                io.Int.Input("batch_index", default=0, min=0, max=4096, tooltip="Which image of a batch to convert."),
                 io.Float.Input("confidence_threshold", default=0.1, min=0.0, max=1.0, step=0.01,
-                               tooltip="Exclude pixels whose per-image normalised confidence is below this value (0 = keep all). "
-                                       "Used when the geometry has confidence map (Small/Base models)."),
+                    tooltip="Exclude pixels whose per-image normalised confidence is below this value (0 = keep all). Used when the geometry has a confidence map (Small/Base models)."),
                 io.Boolean.Input("use_sky_mask", default=True,
-                                 tooltip="Exclude sky-probability pixels (sky >= 0.5). "
-                                         "Used when the geometry has sky map (Mono/Metric models)."),
+                    tooltip="Exclude sky-probability pixels (sky >= 0.5). Used when the geometry has a sky map (Mono/Metric models)."),
                 io.Int.Input("downsample", default=1, min=1, max=16,
-                             tooltip="Take every Nth pixel (1 = full resolution). "
-                                     "Higher values give fewer points and faster processing."),
+                    tooltip="Take every Nth pixel (1 = full resolution). Higher values give fewer points and faster processing."),
             ],
             # TODO: add a proper PointCloud output type
             outputs=[DA3PointCloud.Output(display_name="point_cloud")],
         )
 
     @classmethod
-    def execute(cls, da3_geometry, batch_index, confidence_threshold,
-                use_sky_mask, downsample) -> io.NodeOutput:
+    def execute(cls, da3_geometry, batch_index, confidence_threshold, use_sky_mask, downsample) -> io.NodeOutput:
         depth_all = da3_geometry["depth"]   # (B, H, W)
         B = depth_all.shape[0]
         if batch_index >= B:
