@@ -1,6 +1,27 @@
 from comfy_api.latest import IO
 
 
+def format_value_not_in_list_details(input_name, invalid_vals, combo_options, force_truncate=False, max_items=20):
+    """Build the ``details`` string for a ``value_not_in_list`` validation error.
+
+    Returns a ``(details, truncated)`` tuple. ``details`` always names the
+    offending input and value(s) so the error stays debuggable. The list of
+    valid options is replaced with a short length summary when it has more
+    than ``max_items`` entries (so errors don't embed entire folder listings)
+    or when ``force_truncate`` is set; ``truncated`` is True in that case and
+    callers should also omit the input config from the error, since it
+    contains the same options list.
+    """
+    if force_truncate or len(combo_options) > max_items:
+        list_info = f"(list of length {len(combo_options)})"
+        truncated = True
+    else:
+        list_info = str(combo_options)
+        truncated = False
+    details = f"{input_name}: {', '.join(repr(v) for v in invalid_vals)} not in {list_info}"
+    return details, truncated
+
+
 def validate_node_input(
     received_type: str, input_type: str, strict: bool = False
 ) -> bool:

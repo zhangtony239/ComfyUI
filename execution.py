@@ -37,7 +37,7 @@ from comfy_execution.graph import (
     get_input_info,
 )
 from comfy_execution.graph_utils import GraphBuilder, is_link
-from comfy_execution.validation import validate_node_input
+from comfy_execution.validation import format_value_not_in_list_details, validate_node_input
 from comfy_execution.progress import get_progress_state, reset_progress_state, add_progress_handler, WebUIProgressHandler
 from comfy_execution.utils import CurrentNodeContext
 from comfy_execution.asset_enrichment import enrich_output_with_assets
@@ -1043,21 +1043,19 @@ async def validate_inputs(prompt_id, prompt, item, validated, visiting=None):
                     else:
                         invalid_vals = [val] if val not in combo_options else []
                     if invalid_vals:
-                        input_config = info
-                        list_info = ""
-
                         # Don't send back gigantic lists like if they're lots of
-                        # scanned model filepaths
-                        if len(combo_options) > 20:
-                            list_info = f"(list of length {len(combo_options)})"
-                            input_config = None
-                        else:
-                            list_info = str(combo_options)
+                        # scanned model filepaths. The truncated form also omits
+                        # the input config, which contains the same options list.
+                        details, truncated = format_value_not_in_list_details(
+                            x, invalid_vals, combo_options,
+                            force_truncate=args.truncate_validation_error_lists,
+                        )
+                        input_config = None if truncated else info
 
                         error = {
                             "type": "value_not_in_list",
                             "message": "Value not in list",
-                            "details": f"{x}: {', '.join(repr(v) for v in invalid_vals)} not in {list_info}",
+                            "details": details,
                             "extra_info": {
                                 "input_name": x,
                                 "input_config": input_config,

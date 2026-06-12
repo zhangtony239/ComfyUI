@@ -227,6 +227,8 @@ parser.add_argument("--user-directory", type=is_valid_directory, default=None, h
 
 parser.add_argument("--enable-compress-response-body", action="store_true", help="Enable compressing response body.")
 
+parser.add_argument("--truncate-validation-error-lists", action="store_true", help="Always replace the list of valid options in 'value not in list' prompt validation errors with a short length summary. By default the full list is included in the error message when it has 20 or fewer entries, which can embed entire folder listings for file/model dropdowns.")
+
 parser.add_argument(
     "--comfy-api-base",
     type=str,
