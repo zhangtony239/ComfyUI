@@ -138,7 +138,7 @@ class ConditioningSetAreaPercentageVideo:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "append"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def append(self, conditioning, width, height, temporal, x, y, z, strength):
         c = node_helpers.conditioning_set_values(conditioning, {"area": ("percentage", temporal, height, width, z, y, x),
@@ -160,4 +160,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageOnlyCheckpointLoader": "Load Checkpoint Image Only (img2vid model)",
     "VideoLinearCFGGuidance": "Video Linear CFG Guidance",
     "VideoTriangleCFGGuidance": "Video Triangle CFG Guidance",
+    "ConditioningSetAreaPercentageVideo": "Conditioning (Set Area with Percentage for Video)",
 }

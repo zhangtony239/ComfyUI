@@ -393,7 +393,7 @@ class VOIDWarpedNoiseSource(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="VOIDWarpedNoiseSource",
-            category="model/sampling/void",
+            category="model/latent/void",
             inputs=[
                 io.Latent.Input("warped_noise",
                     tooltip="Warped noise latent from VOIDWarpedNoise"),

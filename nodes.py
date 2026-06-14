@@ -87,7 +87,7 @@ class ConditioningCombine:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "combine"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
     SEARCH_ALIASES = ["combine", "merge conditioning", "combine prompts", "merge prompts", "mix prompts", "add prompt"]
 
     def combine(self, conditioning_1, conditioning_2):
@@ -104,7 +104,7 @@ class ConditioningAverage :
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "addWeighted"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def addWeighted(self, conditioning_to, conditioning_from, conditioning_to_strength):
         out = []
@@ -143,7 +143,7 @@ class ConditioningConcat:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "concat"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def concat(self, conditioning_to, conditioning_from):
         out = []
@@ -176,7 +176,7 @@ class ConditioningSetArea:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "append"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def append(self, conditioning, width, height, x, y, strength):
         c = node_helpers.conditioning_set_values(conditioning, {"area": (height // 8, width // 8, y // 8, x // 8),
@@ -197,7 +197,7 @@ class ConditioningSetAreaPercentage:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "append"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def append(self, conditioning, width, height, x, y, strength):
         c = node_helpers.conditioning_set_values(conditioning, {"area": ("percentage", height, width, y, x),
@@ -214,7 +214,7 @@ class ConditioningSetAreaStrength:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "append"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def append(self, conditioning, strength):
         c = node_helpers.conditioning_set_values(conditioning, {"strength": strength})
@@ -234,7 +234,7 @@ class ConditioningSetMask:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "append"
 
-    CATEGORY = "model/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def append(self, conditioning, mask, set_cond_area, strength):
         set_area_to_bounds = False
@@ -257,7 +257,7 @@ class ConditioningZeroOut:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "zero_out"
 
-    CATEGORY = "advanced/conditioning"
+    CATEGORY = "model/conditioning"
 
     def zero_out(self, conditioning):
         c = []
@@ -283,11 +283,10 @@ class ConditioningSetTimestepRange:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "set_range"
 
-    CATEGORY = "advanced/conditioning"
+    CATEGORY = "model/conditioning/transform"
 
     def set_range(self, conditioning, start, end):
-        c = node_helpers.conditioning_set_values(conditioning, {"start_percent": start,
-                                                                "end_percent": end})
+        c = node_helpers.conditioning_set_values(conditioning, {"start_percent": start, "end_percent": end})
         return (c, )
 
 class VAEDecode:
@@ -576,7 +575,7 @@ class CheckpointLoader:
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
     FUNCTION = "load_checkpoint"
 
-    CATEGORY = "advanced/loaders"
+    CATEGORY = "model/loaders"
     DEPRECATED = True
 
     def load_checkpoint(self, config_name, ckpt_name):
@@ -622,8 +621,9 @@ class DiffusersLoader:
         return {"required": {"model_path": (paths,), }}
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
     FUNCTION = "load_checkpoint"
+    DEPRECATED = True
 
-    CATEGORY = "advanced/loaders/deprecated"
+    CATEGORY = "model/loaders"
 
     def load_checkpoint(self, model_path, output_vae=True, output_clip=True):
         for search_path in folder_paths.get_folder_paths("diffusers"):
@@ -1005,7 +1005,7 @@ class DualCLIPLoader:
     RETURN_TYPES = ("CLIP",)
     FUNCTION = "load_clip"
 
-    CATEGORY = "advanced/loaders"
+    CATEGORY = "model/loaders"
 
     DESCRIPTION = "[Recipes]\n\nsdxl: clip-l, clip-g\nsd3: clip-l, clip-g / clip-l, t5 / clip-g, t5\nflux: clip-l, t5\nhidream: at least one of t5 or llama, recommended t5 and llama\nhunyuan_image: qwen2.5vl 7b and byt5 small\nnewbie: gemma-3-4b-it, jina clip v2"
 
@@ -2043,7 +2043,7 @@ NODE_CLASS_MAPPINGS = {
     "ImageBatch": ImageBatch,
     "ImagePadForOutpaint": ImagePadForOutpaint,
     "EmptyImage": EmptyImage,
-    "ConditioningAverage": ConditioningAverage ,
+    "ConditioningAverage": ConditioningAverage,
     "ConditioningCombine": ConditioningCombine,
     "ConditioningConcat": ConditioningConcat,
     "ConditioningSetArea": ConditioningSetArea,
@@ -2106,6 +2106,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UNETLoader": "Load Diffusion Model",
     "unCLIPCheckpointLoader": "Load unCLIP Checkpoint",
     "GLIGENLoader": "Load GLIGEN Model",
+    "DiffusersLoader": "Load Diffusers Model (DEPRECATED)",
     # Conditioning
     "CLIPVisionEncode": "CLIP Vision Encode",
     "StyleModelApply": "Apply Style Model",
@@ -2113,13 +2114,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CLIPSetLastLayer": "CLIP Set Last Layer",
     "ConditioningCombine": "Conditioning (Combine)",
     "ConditioningAverage ": "Conditioning (Average)",
+    "ConditioningAverage": "Conditioning (Average)",
     "ConditioningConcat": "Conditioning (Concat)",
     "ConditioningSetArea": "Conditioning (Set Area)",
     "ConditioningSetAreaPercentage": "Conditioning (Set Area with Percentage)",
+    "ConditioningSetAreaStrength": "Conditioning (Set Area Strength)",
     "ConditioningSetMask": "Conditioning (Set Mask)",
     "ControlNetApply": "Apply ControlNet (DEPRECATED)",
     "ControlNetApplyAdvanced": "Apply ControlNet",
     "GLIGENTextBoxApply": "Apply GLIGEN Text Box",
+    "ConditioningZeroOut": "Conditioning Zero Out",
     # Latent
     "VAEEncodeForInpaint": "VAE Encode (for Inpainting)",
     "SetLatentNoiseMask": "Set Latent Noise Mask",

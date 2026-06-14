@@ -38,8 +38,9 @@ class CLIPTextEncodeHiDream(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="CLIPTextEncodeHiDream",
+            display_name="CLIP Text Encode (HiDream)",
             search_aliases=["hidream prompt"],
-            category="advanced/conditioning",
+            category="model/conditioning/hidream",
             inputs=[
                 io.Clip.Input("clip"),
                 io.String.Input("clip_l", multiline=True, dynamic_prompts=True),

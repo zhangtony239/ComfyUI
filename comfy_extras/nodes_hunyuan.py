@@ -14,7 +14,8 @@ class CLIPTextEncodeHunyuanDiT(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="CLIPTextEncodeHunyuanDiT",
-            category="advanced/conditioning",
+            display_name="CLIP Text Encode (Hunyuan Image)",
+            category="model/conditioning/hunyuan image",
             inputs=[
                 io.Clip.Input("clip"),
                 io.String.Input("bert", multiline=True, dynamic_prompts=True),
@@ -277,7 +278,7 @@ class TextEncodeHunyuanVideo_ImageToVideo(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="TextEncodeHunyuanVideo_ImageToVideo",
-            category="advanced/conditioning",
+            category="model/conditioning/hunyuan video",
             inputs=[
                 io.Clip.Input("clip"),
                 io.ClipVisionOutput.Input("clip_vision_output"),

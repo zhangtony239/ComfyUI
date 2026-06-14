@@ -66,7 +66,8 @@ class CLIPTextEncodeSD3(io.ComfyNode):
         return io.Schema(
             node_id="CLIPTextEncodeSD3",
             search_aliases=["sd3 prompt"],
-            category="advanced/conditioning",
+            display_name="CLIP Text Encode (SD3)",
+            category="model/conditioning/stable diffusion",
             inputs=[
                 io.Clip.Input("clip"),
                 io.String.Input("clip_l", multiline=True, dynamic_prompts=True),

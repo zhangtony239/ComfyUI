@@ -104,8 +104,9 @@ class CLIPTextEncodeKandinsky5(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="CLIPTextEncodeKandinsky5",
+            display_name="CLIP Text Encode (Kandinsky 5)",
             search_aliases=["kandinsky prompt"],
-            category="advanced/conditioning/kandinsky5",
+            category="model/conditioning/kandinsky",
             inputs=[
                 io.Clip.Input("clip"),
                 io.String.Input("clip_l", multiline=True, dynamic_prompts=True),

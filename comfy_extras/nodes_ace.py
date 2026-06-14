@@ -111,8 +111,8 @@ class ReferenceAudio(IO.ComfyNode):
     def define_schema(cls):
         return IO.Schema(
             node_id="ReferenceTimbreAudio",
-            display_name="Reference Audio",
-            category="advanced/conditioning/audio",
+            display_name="Set Reference Audio",
+            category="model/conditioning",
             is_experimental=True,
             description="This node sets the reference audio for ace step 1.5",
             inputs=[

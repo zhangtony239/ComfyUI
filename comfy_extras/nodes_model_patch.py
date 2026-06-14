@@ -479,7 +479,7 @@ class QwenImageDiffsynthControlnet:
     FUNCTION = "diffsynth_controlnet"
     EXPERIMENTAL = True
 
-    CATEGORY = "advanced/loaders/qwen"
+    CATEGORY = "model/patch/qwen"
 
     def diffsynth_controlnet(self, model, model_patch, vae, image=None, strength=1.0, inpaint_image=None, mask=None):
         model_patched = model.clone()
@@ -674,4 +674,12 @@ NODE_CLASS_MAPPINGS = {
     "ZImageFunControlnet": ZImageFunControlnet,
     "USOStyleReference": USOStyleReference,
     "SUPIRApply": SUPIRApply,
+}
+
+NODE_DISPLAY_NAMES = {
+    "ModelPatchLoader": "Load Model Patch",
+    "QwenImageDiffsynthControlnet": "Apply Qwen Image DiffSynth ControlNet",
+    "ZImageFunControlnet": "Apply Z-Image Fun ControlNet",
+    "USOStyleReference": "Apply USO Style Reference",
+    "SUPIRApply": "Apply SUPIR Patch",
 }
