@@ -161,6 +161,7 @@ class SaveAudioAdvanced(IO.ComfyNode):
             display_name="Save Audio",
             description="Saves the input audio to your ComfyUI output directory.",
             category="audio",
+            essentials_category="Audio",
             inputs=[
                 IO.Audio.Input("audio", tooltip="The audio to save."),
                 IO.String.Input(
