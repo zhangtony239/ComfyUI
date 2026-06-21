@@ -4,6 +4,43 @@ version = "0.25.0"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.11.8",
+    "alembic>=1.18.4",
+    "av>=16.0.0",
+    "blake3>=1.0.8",
+    "comfy-aimdo==0.4.10",
+    "comfy-kitchen==0.2.10",
+    "comfyui-embedded-docs==0.5.4",
+    "comfyui-frontend-package==1.45.19",
+    "comfyui-workflow-templates==0.10.0",
+    "einops>=0.8.2",
+    "filelock>=3.29.0",
+    "glfw>=2.10.0",
+    "kornia>=0.7.1",
+    "numpy>=1.25.0",
+    "pillow>=12.2.0",
+    "psutil>=7.2.2",
+    "pydantic~=2.0",
+    "pydantic-settings~=2.0",
+    "pyopengl>=3.1.10",
+    "pyyaml>=6.0.3",
+    "requests>=2.28.1",
+    "safetensors>=0.4.2",
+    "scipy>=1.15.3",
+    "sentencepiece>=0.2.1",
+    "simpleeval>=1.0.0",
+    "spandrel>=0.4.2",
+    "sqlalchemy>=2.0.0",
+    "tokenizers>=0.13.3",
+    "torch>=2.12.1",
+    "torchaudio>=2.11.0",
+    "torchsde>=0.2.6",
+    "torchvision>=0.27.1",
+    "tqdm>=4.66.5",
+    "transformers>=4.50.3",
+    "yarl>=1.18.0",
+]
 
 [project.urls]
 homepage = "https://www.comfy.org/"
@@ -73,3 +110,6 @@ messages_control.disable = [
   "no-else-return",
   "unused-variable",
 ]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/xpu"
