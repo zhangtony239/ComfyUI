@@ -13,6 +13,10 @@
             "args": [
                 "--gpu-only",
                 "--disable-mmap",
+                "--disable-xformers",
+                "--disable-smart-memory",
+                "--disable-all-custom-nodes",
+                "--force-channels-last",
                 "--oneapi-device-selector",
                 "level_zero:0"
             ],
